@@ -557,6 +557,12 @@ def recent_activity() -> RecentActivityResponse:
     return RecentActivityResponse(items=list(_RECENT_DECISIONS))
 
 
+@app.get("/", response_model=LiveDashboardResponse)
+def root_dashboard() -> dict[str, Any]:
+    """Map root URL directly to the live dashboard payload."""
+    return _build_live_dashboard_payload()
+
+
 @app.get("/live-dashboard", response_model=LiveDashboardResponse)
 def live_dashboard() -> dict[str, Any]:
     """Return full real-time dashboard payload consumed by RL Reality UI."""
