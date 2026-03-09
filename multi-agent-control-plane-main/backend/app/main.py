@@ -48,10 +48,10 @@ except ImportError:
 _bridge = get_bridge()
 
 app = FastAPI(
-    title="RL Decision Brain API",
+    title="Pravah Decision Brain API",
     version="1.0.0",
     description=(
-        "Stateless, deterministic, demo-frozen Decision Brain API for dashboard integration. "
+        "Stateless, deterministic, demo-frozen Pravah Decision Brain API for dashboard integration. "
         "Integrated with Multi-Agent Control Plane for unified orchestration."
     ),
 )
@@ -61,6 +61,7 @@ app.add_middleware(
     allow_origins=[
         "https://multi-agent-control-plane-frontend.vercel.app",
         "https://multi-agent-control-plane-frontend-dev.vercel.app",
+        "http://localhost:4500",
         "http://localhost:3200",
         "http://localhost:3000",
     ],
@@ -309,7 +310,7 @@ def _resolve_control_plane_root() -> Path:
 
 
 def _build_live_dashboard_payload() -> dict[str, Any]:
-    """Build full dashboard payload consumed by RL Reality Live Dashboard."""
+    """Build full dashboard payload consumed by Pravah Dashboard."""
 
     recent_count = len(_RECENT_DECISIONS)
     success_rate_percent = int(SUCCESS_RATE * 100)
@@ -367,7 +368,7 @@ def _build_live_dashboard_payload() -> dict[str, Any]:
     return {
         "generated_at": now_iso,
         "header": {
-            "title": "🚀 RL Reality Live Dashboard",
+            "title": "🚀 Pravah Dashboard",
             "subtitle": "Real-time Production Monitoring",
         },
         "live_production_monitoring": [

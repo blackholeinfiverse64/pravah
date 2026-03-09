@@ -54,6 +54,7 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": [
     "https://multi-agent-control-plane-frontend.vercel.app",
     "https://multi-agent-control-plane-frontend-dev.vercel.app",
+    "http://localhost:4500",
     "http://localhost:3200",
     "http://localhost:3000"
 ]}})

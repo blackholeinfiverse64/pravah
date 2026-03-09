@@ -34,12 +34,14 @@ ENV/
 *.swo
 
 # Logs
-logs/*.log
-logs/*/*.log
+logs/
+backend/logs/
 *.log
+*.jsonl
 
 # Data files
 dataset/*.bak
+*.csv
 *.csv.bak
 
 # OS
