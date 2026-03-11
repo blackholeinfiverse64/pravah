@@ -3604,3 +3604,4 @@ timestamp,service_name,status,uptime_seconds,downtime_seconds,availability_perce
 2026-02-20T16:06:12.038981,multi_deploy_agent_dev,running,5.0,0,100.0,dev
 2026-02-20T16:06:17.040968,multi_deploy_agent_dev,running,5.0,0,100.0,dev
 2026-02-20T16:06:22.043941,multi_deploy_agent_dev,running,5.0,0,100.0,dev
+2026-03-11T10:23:34.663668,restart_dev,success,0,0,100,dev

@@ -9,6 +9,10 @@ services:
         value: "true"
       - key: DEMO_FREEZE_MODE
         value: "true"
+      - key: BACKEND_CORS_ORIGINS
+        value: "https://multi-agent-control-plane-frontend.vercel.app,http://localhost:4500,http://localhost:3000"
+      - key: BACKEND_CORS_ORIGIN_REGEX
+        value: "^https://.*\\.vercel\\.app$|^http://localhost:\\d+$"
       - key: PYTHONUNBUFFERED
         value: "1"
       - key: PORT

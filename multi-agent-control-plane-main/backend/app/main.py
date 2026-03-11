@@ -10,6 +10,29 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .execution_simulator import execute_action
 
+
+def _parse_cors_origins() -> list[str]:
+    """Parse explicit CORS origins from env with sane defaults for local and prod."""
+    raw = os.getenv(
+        "BACKEND_CORS_ORIGINS",
+        ",".join(
+            [
+                "http://localhost:4500",
+                "http://localhost:3000",
+                "https://multi-agent-control-plane-frontend.vercel.app",
+            ]
+        ),
+    )
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+def _cors_origin_regex() -> str:
+    """Allow Vercel preview URLs and localhost ports unless overridden."""
+    return os.getenv(
+        "BACKEND_CORS_ORIGIN_REGEX",
+        r"^https://.*\.vercel\.app$|^http://localhost:\d+$",
+    )
+
 try:
     from .config import ACTION_SCOPE, DEMO_FROZEN, STATELESS, SUCCESS_RATE
     from .decision_engine import DecisionEngine
@@ -48,14 +71,23 @@ app = FastAPI(
     description="Pravah RL Decision Brain integrated with Multi-Agent Control Plane",
 )
 
-# CORS middleware: wildcard + no credentials (stateless API requirement)
+# CORS middleware for local dev + Vercel deploys (stateless API, no credentials)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_parse_cors_origins(),
+    allow_origin_regex=_cors_origin_regex(),
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    max_age=86400,
 )
+
+
+# Startup event: Initialize demo links for realistic dashboard
+@app.on_event("startup")
+async def startup_event():
+    """Initialize dashboard with demo data on app startup."""
+    _initialize_demo_links()
 
 
 # In-memory recent activity only (reset on process restart).
@@ -80,6 +112,47 @@ _LINK_EVENTS: deque[dict[str, Any]] = deque(maxlen=20)
 
 # Simulated project metadata for ingested links
 _LINK_METADATA: dict[str, dict[str, Any]] = {}
+
+# Initialize with demo links for realistic dashboard on startup
+def _initialize_demo_links():
+    """Populate demo links with realistic metadata on app startup."""
+    demo_links = [
+        {
+            "link": "https://github.com/I-am-ShivamPal/multi-agents-control-plane",
+            "name": "multi-agents-control-plane",
+        },
+        {
+            "link": "https://github.com/I-am-ShivamPal/multi-agent-control-plane-frontend",
+            "name": "multi-agent-control-plane-frontend",
+        },
+    ]
+    
+    for demo_link in demo_links:
+        link = demo_link["link"]
+        name = demo_link["name"]
+        
+        # Only add if not already ingested
+        if not any(item["link"] == link for item in _INGESTED_LINKS):
+            _INGESTED_LINKS.append({
+                "link": link,
+                "name": name,
+                "added_at": datetime.now(timezone.utc).isoformat(),
+                "status": "HEALTHY",
+                "response_time_ms": 300 + (_get_link_hash(link) % 200),
+                "uptime_percent": 99.0 + (_get_link_hash(link) % 10) / 100,
+                "errors_24h": _get_link_hash(link) % 3,
+            })
+            
+            # Generate and store metadata
+            _LINK_METADATA[link] = _generate_link_metadata(link)
+            
+            # Log the ingestion event
+            _LINK_EVENTS.appendleft({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "event": "link_ingested",
+                "link": link,
+                "name": name,
+            })
 
 
 def _extract_link_name(link: str) -> str:
