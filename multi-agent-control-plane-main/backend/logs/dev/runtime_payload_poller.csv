@@ -5315,3 +5315,12 @@ timestamp,app,env,state,latency_ms,errors_last_min,workers
 2026-03-11T03:59:05.006534Z,local-backend,dev,running,8.05,0,1
 2026-03-11T03:59:15.016347Z,local-backend,dev,running,5.01,0,1
 2026-03-11T03:59:25.031424Z,local-backend,dev,running,2.87,0,1
+2026-03-11T03:59:35.044409Z,local-backend,dev,running,3.0,0,1
+2026-03-11T03:59:45.056501Z,local-backend,dev,running,2.67,0,1
+2026-03-11T03:59:55.076214Z,local-backend,dev,running,4.06,0,1
+2026-03-11T04:00:05.084959Z,local-backend,dev,running,4.1,0,1
+2026-03-11T04:00:15.103826Z,local-backend,dev,running,2.78,0,1
+2026-03-11T04:00:25.121106Z,local-backend,dev,running,4.08,0,1
+2026-03-11T04:00:35.134296Z,local-backend,dev,running,3.84,0,1
+2026-03-11T04:00:45.149309Z,local-backend,dev,running,2.94,0,1
+2026-03-11T04:00:55.165425Z,local-backend,dev,running,2.72,0,1
