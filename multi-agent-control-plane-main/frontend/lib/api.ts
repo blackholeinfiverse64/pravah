@@ -160,6 +160,8 @@ const RAW_API_BASE =
   process.env.NEXT_PUBLIC_API_URL ??
   `http://localhost:${BACKEND_PORT}`;
 const API_BASE = RAW_API_BASE.replace(/\/$/, "");
+const LOCAL_API_BASE = `http://localhost:${BACKEND_PORT}`;
+const IS_LOCAL_PRIMARY = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(API_BASE);
 
 export async function getAutonomousStatus() {
   return fetchJson<Record<string, unknown>>("/autonomous-status");
@@ -181,19 +183,33 @@ type DecisionWithControlPlaneResponse = {
 };
 
 async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const requestInit: RequestInit = {
     ...init,
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
     },
-  });
+  };
 
-  if (!response.ok) {
-    throw new Error(`Request failed for ${path}: ${response.status}`);
+  try {
+    const response = await fetch(`${API_BASE}${path}`, requestInit);
+    if (!response.ok) {
+      throw new Error(`Request failed for ${path}: ${response.status}`);
+    }
+    return (await response.json()) as T;
+  } catch (primaryError) {
+    if (IS_LOCAL_PRIMARY) {
+      throw primaryError;
+    }
+
+    const fallbackResponse = await fetch(`${LOCAL_API_BASE}${path}`, requestInit);
+    if (!fallbackResponse.ok) {
+      throw new Error(
+        `Request failed for ${path}: primary ${API_BASE} unreachable; local fallback ${LOCAL_API_BASE} returned ${fallbackResponse.status}`,
+      );
+    }
+    return (await fallbackResponse.json()) as T;
   }
-
-  return (await response.json()) as T;
 }
 
 export async function getHealth() {
