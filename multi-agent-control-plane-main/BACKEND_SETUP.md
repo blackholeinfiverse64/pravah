@@ -1,132 +1,131 @@
-# Backend Setup & Configuration
+# Backend Setup and Configuration
 
-## ✅ SINGLE BACKEND: FastAPI (backend/app/main.py)
+This repository currently contains two backend API surfaces under control_plane:
 
-The project uses **ONE backend**: FastAPI-based Pravah Decision Brain API.
+1. Flask Control Plane API (runtime intake and control-plane operations)
+2. FastAPI Decision Brain API (dashboard and decision-brain endpoints)
 
-### Running the Backend
+Both are used in the codebase today and should be treated as complementary services.
 
-**Development (with auto-reload):**
-```bash
-.venv\Scripts\python -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
+## 1) Flask Control Plane API
+
+Path:
+
+- control_plane/api/agent_api.py
+
+Default port:
+
+- 7000 (CONTROL_PLANE_PORT, fallback PORT)
+
+Key endpoints:
+
+- GET /api/health
+- GET /api/status
+- POST /api/runtime
+- GET /api/control-plane/apps
+- GET /api/control-plane/health
+- GET /api/control-plane/history/<app_name>
+- POST /api/control-plane/override
+
+Run locally:
+
+```powershell
+cd control_plane
+$env:ENVIRONMENT="dev"
+$env:CONTROL_PLANE_PORT="7000"
+..\.venv\Scripts\python.exe api\agent_api.py
 ```
 
-**Or use the entry point script:**
-```bash
-.venv\Scripts\python backend/run.py
+## 2) FastAPI Decision Brain API
+
+Paths:
+
+- control_plane/backend/app/main.py
+- control_plane/backend/run.py
+
+Default port:
+
+- 8000 (BACKEND_PORT, fallback PORT)
+
+Key endpoints:
+
+- GET /health
+- GET /action-scope
+- POST /decision
+- GET /recent-activity
+- GET /live-dashboard
+- GET /decision-summary
+- POST /decision-with-control-plane
+- GET /control-plane/status
+- GET /control-plane/apps
+- GET /orchestration/metrics
+- GET /autonomous-status
+- POST /ingest-link
+- POST /remove-link
+
+Run locally:
+
+```powershell
+cd control_plane
+$env:BACKEND_PORT="8000"
+..\.venv\Scripts\python.exe backend\run.py
 ```
-Port: Defaults to **8000** (configurable via `BACKEND_PORT` env var)
 
-**Production (Render):**
-- Use `render.yaml` which runs: `uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT`
+## 3) Frontend Integration
 
----
+Frontend path:
 
-## ⚠️ DEPRECATED: Flask API (api/agent_api.py & wsgi.py)
+- dashboard/frontend
 
-The old Flask-based API (`api/agent_api.py` and `wsgi.py`) is **NOT USED** and should be ignored.
-- **Do not run** `python wsgi.py` or import `agent_api.py` directly
-- Only the FastAPI backend (`backend/app/main.py`) is the canonical backend
+Default frontend port from package script:
 
----
+- 4500
 
-## Backend API Endpoints (FastAPI)
-
-All endpoints served by `backend/app/main.py`:
-
-### Health & Status
-- `GET /health` - Service health and guarantees
-- `GET /action-scope` - Environment-specific allowed actions
-- `GET /decision-summary` - Aggregate decision metrics
-
-### Real-time Dashboard
-- `GET /` - Root (maps to live dashboard)
-- `GET /live-dashboard` - Full real-time dashboard payload
-
-### Decision Engine
-- `POST /decision` - Compute a deterministic decision
-- `GET /recent-activity` - Last 10 decisions
-
-### Control Plane
-- `GET /control-plane/status` - Control plane status
-- `GET /control-plane/apps` - List managed apps
-- `GET /orchestration/metrics` - Orchestration metrics
-- `POST /decision-with-control-plane` - Integrated decision
-
-### Link Ingestion (Project Monitoring)
-- `POST /ingest-link` - Ingest a repository or website for monitoring
-- `POST /remove-link` - Stop monitoring a link
-
-### Autonomous Loop
-- `GET /autonomous-status` - Autonomous decision loop status
-- `POST /start-autonomous-loop` - Start autonomous decision making
-
----
-
-## Frontend Integration (localhost)
-
-### Frontend Configuration (.env.local)
+Recommended .env.local values:
 
 ```env
 NEXT_PUBLIC_BACKEND_PORT=8000
 NEXT_PUBLIC_DECISION_BRAIN_API_URL=http://localhost:8000
 NEXT_PUBLIC_API_URL=http://localhost:8000
-NEXT_PUBLIC_CONTROL_PLANE_URL=http://localhost:8000
+NEXT_PUBLIC_CONTROL_PLANE_URL=http://localhost:7000
 ```
 
-### Starting Frontend
+## 4) CORS
 
-```bash
-cd frontend
-npm run dev
-```
-Frontend runs on: **http://localhost:4500**
-Backend: **http://localhost:8000** (configured in .env.local)
+FastAPI CORS is configured in:
 
----
+- control_plane/backend/app/main.py
 
-## CORS Configuration
+Variables:
 
-The FastAPI backend includes:
-- `allow_origins=["*"]` - Wildcard CORS for public API
-- `allow_credentials=False` - Required for wildcard CORS
-- Applies to all endpoints
+- BACKEND_CORS_ORIGINS
+- BACKEND_CORS_ORIGIN_REGEX
 
----
+## 5) Production (Render)
 
-## Production Deployment (Render)
+render.yaml defines backend startup as:
 
-**Backend:**
-- Deployment specified in `render.yaml`
-- Start command: `uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT`
-- Only endpoint: `https://multi-agents-control-plane-bck.onrender.com`
+- uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
 
-**Frontend:**
-- Deployed on Vercel
-- Update `.env.local` to use production URLs when needed:
-  ```env
-  NEXT_PUBLIC_DECISION_BRAIN_API_URL=https://multi-agents-control-plane-bck.onrender.com
-  NEXT_PUBLIC_API_URL=https://multi-agents-control-plane-bck.onrender.com
-  NEXT_PUBLIC_CONTROL_PLANE_URL=https://multi-agents-control-plane-bck.onrender.com
-  ```
+When deploying only FastAPI + frontend, this is sufficient. If Flask runtime intake is also needed in production, deploy Flask as a separate service.
 
----
+## 6) Troubleshooting
 
-## Troubleshooting
+Cannot connect to FastAPI:
 
-### "Cannot connect to backend"
-1. Verify backend is running: `http://localhost:8000/health` should return 200
-2. Check frontend .env.local has correct backend URL
-3. Verify port 8000 is not blocked by firewall
+1. Verify http://localhost:8000/health returns 200.
+2. Check dashboard/frontend/.env.local values.
+3. Restart frontend after env changes.
 
-### "Port 8000 already in use"
-```bash
-# Find and kill process on port 8000
-netstat -ano | findstr "8000"
+Cannot connect to Flask:
+
+1. Verify http://localhost:7000/api/health returns 200.
+2. Confirm CONTROL_PLANE_PORT and ENVIRONMENT are set.
+
+Port already in use:
+
+```powershell
+netstat -ano | findstr ":7000"
+netstat -ano | findstr ":8000"
 taskkill /PID <PID> /F
 ```
-
-### "No Access-Control-Allow-Origin header"
-- Backend should be running with FastAPI's CORSMiddleware (already configured)
-- Verify backend is restarted after code changes
-

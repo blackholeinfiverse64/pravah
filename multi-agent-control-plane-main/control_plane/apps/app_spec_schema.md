@@ -1,5 +1,11 @@
 # App Specification Schema
 
+Scope note:
+
+- This document describes a full/superset app spec contract for onboarding and automation.
+- Current multi-app listing logic primarily relies on `name`, `type`, `source_type`, and `health_endpoint` fields from registry JSON files.
+- Additional fields in this document are recommended for richer deployment automation but may not be required by every runtime path.
+
 ## Overview
 Unified app specification format aligned with Ritesh's RL interpreter requirements.
 

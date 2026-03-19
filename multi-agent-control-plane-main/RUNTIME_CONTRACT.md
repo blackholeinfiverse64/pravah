@@ -10,6 +10,12 @@ Canonical source of truth:
 
 This contract is frozen and must not be reshaped at runtime.
 
+Current implementation notes:
+
+- Main schema file at repo root: `runtime_payload_schema.json`
+- Mirror copy used by contracts package: `contracts/runtime_payload_schema.json`
+- Flask runtime intake validates at `control_plane/api/agent_api.py`
+
 ---
 
 ## Schema (Single JSON Schema)
@@ -95,6 +101,11 @@ All errors are **fail-fast**. Invalid payloads must be refused and not executed.
 2. If invalid, return explicit refusal/error (no silent fallback).
 3. If valid, pass payload unchanged to decision path.
 4. Log validation outcome for auditability.
+
+Validation modules used in runtime path:
+
+- `control_plane/core/input_validator.py`
+- `control_plane/core/runtime_event_validator.py`
 
 ---
 

@@ -1,6 +1,9 @@
 # Universal DevOps Runtime Intelligence (RL Decision Brain)
 ## Demo-Frozen Version
 
+> Scope note: this document describes a legacy/demo RL module under control_plane/core/rl/external_api.
+> It is not the primary backend API used by dashboard/frontend in the current control_plane/backend/app stack.
+
 > **⚠️ DEMO MODE ACTIVE**  
 > Learning disabled for demo safety. Deterministic behavior guaranteed.
 
