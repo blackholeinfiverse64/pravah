@@ -5,6 +5,8 @@ services:
   dashboard:
     build: .
     container_name: cicd-dashboard
+    profiles:
+      - legacy
     ports:
       - "8501:8501"
     environment:
@@ -33,6 +35,8 @@ services:
   observability:
     build: .
     container_name: cicd-observability
+    profiles:
+      - legacy
     ports:
       - "8502:8502"
     environment:

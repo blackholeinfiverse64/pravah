@@ -3,6 +3,7 @@ import time
 import os
 from datetime import datetime
 from core.sovereign_bus import bus
+from pravah_stream.stream import emit
 
 class TelemetryCollector:
     """Collects real-time telemetry from agents via sovereign bus."""
@@ -24,12 +25,27 @@ class TelemetryCollector:
     
     def _collect_telemetry(self, message):
         """Collect telemetry data from bus messages."""
+        timestamp = datetime.now().isoformat()
+        data = message.get("data", {})
         telemetry_entry = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": timestamp,
             "event_type": message["event_type"],
-            "data": message.get("data", {}),
+            "data": data,
             "agent_status": self._get_agent_status()
         }
+
+        emit({
+            "trace_id": message.get("trace_id", "telemetry"),
+            "execution_id": message.get("execution_id", "telemetry"),
+            "timestamp": timestamp,
+            "source": "telemetry",
+            "signal_type": "verification",
+            "payload": {
+                "event_type": message["event_type"],
+                "data": data,
+                "agent_status": self._get_agent_status(),
+            },
+        })
         
         self._store_telemetry(telemetry_entry)
     
@@ -37,10 +53,9 @@ class TelemetryCollector:
         """Get current status of all agents."""
         return {
             "deploy_agent": "active",
-            "issue_detector": "monitoring", 
             "uptime_monitor": "tracking",
-            "auto_heal": "ready",
-            "rl_optimizer": "learning"
+            "execution_layer": "ready",
+            "telemetry": "collecting"
         }
     
     def _store_telemetry(self, entry):

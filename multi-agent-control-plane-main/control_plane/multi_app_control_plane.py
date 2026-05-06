@@ -5,7 +5,10 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List
 
 from control_plane.app_override_manager import AppOverrideManager
-
+from core_hooks.signal_builder import build_base_signal
+import pathlib
+from executer.runner import execute
+from sarathi.headers import SARATHI_HEADER, SARATHI_VALUE
 
 class MultiAppControlPlane:
     """Aggregates registry, health overview, and decision history across apps."""
@@ -43,6 +46,35 @@ class MultiAppControlPlane:
         }
         with open(self.history_file, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload) + "\n")
+
+        # Build and emit a standardized sarathi signal when trace_id is available
+        try:
+            # Prefer an explicit `event` object if present (useful where action is finalized).
+            event = payload.get('event') or payload
+
+            # Use trace_id from the explicit event when available (strict)
+            trace_id = event.get('trace_id')
+            app_name = payload.get('app_name')
+            action = payload.get('executed_action') or payload.get('decision_action') or payload.get('action')
+
+            if trace_id and app_name and action:
+                # Build signal using the event's trace id (ensures propagation)
+                signal = build_base_signal(trace_id=event["trace_id"], service_id=app_name, action=action)
+
+                # Prefer direct execution via executer with sarathi caller headers
+                headers = {SARATHI_HEADER: SARATHI_VALUE}
+                try:
+                    execution_result = execute(signal, headers)
+                except Exception:
+                    # Fallback: persist emitted signals for now (sarathi emitter may pick these up)
+                    signals_dir = pathlib.Path("logs/sarathi")
+                    signals_dir.mkdir(parents=True, exist_ok=True)
+                    signals_file = signals_dir / "signals.jsonl"
+                    with open(signals_file, "a", encoding="utf-8") as sf:
+                        sf.write(json.dumps(signal) + "\n")
+        except Exception:
+            # Never let signal emission break the control plane flow
+            pass
 
     def _read_history(self) -> List[Dict[str, Any]]:
         if not os.path.exists(self.history_file):

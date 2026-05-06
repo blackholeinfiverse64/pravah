@@ -3,7 +3,7 @@
 Standardized Event Schema
 Defines the unified event format for automation agents
 """
-
+# ⚠️ DEPRECATED — use schemas/signal_schema.json
 import datetime
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional
@@ -197,3 +197,4 @@ class EventValidator:
                 sanitized[field] = event_dict[field]
 
         return sanitized
+

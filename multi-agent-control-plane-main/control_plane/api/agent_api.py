@@ -20,20 +20,33 @@ import json
 import os
 import sys
 import threading
-
-from jsonschema import ValidationError, validate
-
-# Define project root
-root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+# Ensure repo root is on sys.path so running this module directly works
+# agent_api.py is at control_plane/api; repo root is two levels up
+root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
+from core_hooks.middleware import inject_trace
+from jsonschema import ValidationError, validate
+from core_hooks.rules import validate_trace
+
+
 
 from agent_runtime import AgentRuntime
+import agent_runtime
+print("[RUNTIME] USING RUNTIME FILE:", agent_runtime.__file__)
 from control_plane.multi_app_control_plane import MultiAppControlPlane
-from core.input_validator import InputValidator, ValidationError as InputValidationError
+from control_plane.core.input_validator import InputValidator, ValidationError as InputValidationError
 
 ENVIRONMENT = os.getenv("ENVIRONMENT", "dev")
-SCHEMA_PATH = os.path.join(root_dir, "runtime_payload_schema.json")
+
+# Resolve canonical schema path across current/legacy layouts.
+schema_candidates = [
+    os.path.join(root_dir, "schemas", "signal_schema.json"),
+    os.path.join(os.path.dirname(root_dir), "schemas", "signal_schema.json"),
+    os.path.join(os.path.dirname(root_dir), "runtime_payload_schema.json"),
+]
+SCHEMA_PATH = next((path for path in schema_candidates if os.path.exists(path)), schema_candidates[0])
+
 
 with open(SCHEMA_PATH, "r", encoding="utf-8") as schema_file:
     RUNTIME_SCHEMA = json.load(schema_file)
@@ -69,9 +82,7 @@ limiter = Limiter(
 
 
 def _validate_runtime_payload(payload: dict) -> None:
-    """Validate payload against canonical runtime contract."""
     validate(instance=payload, schema=RUNTIME_SCHEMA)
-
 
 def _event_type_from_contract(payload: dict) -> str:
     """Derive internal event type from canonical runtime contract."""
@@ -89,8 +100,8 @@ def _event_type_from_contract(payload: dict) -> str:
 
 
 def _to_agent_event(payload: dict) -> dict:
-    """Map canonical runtime contract to agent runtime event envelope."""
     return {
+        "trace_id": payload["trace_id"],  # [OK] ADD THIS
         "event_id": f"runtime-{datetime.datetime.utcnow().timestamp()}",
         "event_type": _event_type_from_contract(payload),
         "environment": payload["env"],
@@ -133,6 +144,7 @@ def runtime_status():
 @limiter.limit("30 per minute")
 def runtime_decision():
     """Canonical runtime decision endpoint."""
+
     payload = request.get_json(silent=True)
 
     if payload is None:
@@ -141,7 +153,20 @@ def runtime_decision():
             "error": "Request body must be valid JSON",
         }), 400
 
-    # Hardened input validation
+    # [OK] Inject trace (single point)
+    payload = inject_trace(payload)
+
+    # [OK] Enforce trace
+    try:
+        validate_trace(payload)
+    except Exception as exc:
+        return jsonify({
+            "status": "error",
+            "error": "Trace validation failed",
+            "details": str(exc),
+        }), 400
+
+    # [OK] Hardened input validation
     try:
         InputValidator.validate_runtime_payload(payload)
     except InputValidationError as exc:
@@ -159,11 +184,13 @@ def runtime_decision():
 
     try:
         result = agent.handle_external_event(_to_agent_event(payload))
+
         return jsonify({
             "status": "success",
             "input": payload,
             "result": result,
         }), 200
+
     except Exception as exc:
         return jsonify({
             "status": "error",

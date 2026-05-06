@@ -5,19 +5,16 @@ from pathlib import Path
 from typing import Any
 import sys
 import json
+import uuid
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .dashboard_api import get_dashboard_state
-from .decision_engine import DecisionEngine
-from .schemas import DecisionRequest
-from app.runtime_adapter import runtime_cycle_all
 from app.dashboard_api import router as dashboard_router
 from pydantic import BaseModel, Field
 from typing import Dict, Any
 from datetime import datetime
-from app.decision_engine import DecisionEngine
-from app.decision_engine import DecisionRequest
-from control_plane.backend.app.config import ACTION_SCOPE
+from control_plane.executor.executor import execute
+from control_plane.executor.governance_gate import validate_execution_gate
 
 
 
@@ -25,12 +22,8 @@ from control_plane.backend.app.config import ACTION_SCOPE
 
 class RuntimeIngestPayload(BaseModel):
     service_id: str
-    timestamp: datetime
-    status: str
-    metrics: Dict[str, Any]
-    issue_detected: bool
-    issue_type: str | None = None
-    recommended_action: str | None = None
+    action: str
+    trace_id: str | None = None
 
 
 # Stores latest state per service
@@ -62,11 +55,9 @@ def _cors_origin_regex() -> str:
 
 try:
     from .config import ACTION_SCOPE, DEMO_FROZEN, STATELESS, SUCCESS_RATE
-    from .decision_engine import DecisionEngine
     from .schemas import (
         ActionScopeResponse,
         DecisionDashboardSummary,
-        DecisionRequest,
         DecisionResponse,
         HealthResponse,
         LiveDashboardResponse,
@@ -75,11 +66,9 @@ try:
     from .integration_bridge import get_bridge
 except ImportError:
     from .config import ACTION_SCOPE, DEMO_FROZEN, STATELESS, SUCCESS_RATE
-    from .decision_engine import DecisionEngine
     from .schemas import (
         ActionScopeResponse,
         DecisionDashboardSummary,
-        DecisionRequest,
         DecisionResponse,
         HealthResponse,
         LiveDashboardResponse,
@@ -863,93 +852,44 @@ def api_health():
 
 
 
-def normalize_event_type(issue_type: str | None) -> str:
-    mapping = {
-        "high_cpu": "HIGH_CPU",
-        "high_memory": "HIGH_MEMORY",
-        "latency": "LATENCY"
-    }
-    return mapping.get(issue_type, "HIGH_CPU")  # safe fallback
-
-
-
-
-# @app.post("/control-plane/runtime-ingest")
-# def runtime_ingest(payload: RuntimeIngestPayload):
-#     try:
-#         service_id = payload.service_id
-
-#         # Store latest state
-#         INGESTED_RUNTIME_STATE[service_id] = payload.dict()
-
-#         # 🔥 MAP → DecisionRequest
-#         decision_request = DecisionRequest(
-#             event_type=normalize_event_type(payload.issue_type),          cpu=payload.metrics.get("cpu", 0),
-#             memory=payload.metrics.get("memory", 0),
-#             environment="DEV"
-# )
-
-#         # 🔥 CALL Decision Engine
-#         decision = DecisionEngine.decide(decision_request)
-
-#         return {
-#             "status": "accepted",
-#             "service_id": service_id,
-#             "decision": {
-#                 "action": decision.selected_action,
-#                 "reason": decision.reason,
-#                 "confidence": decision.confidence
-#             }
-#         }
-
-#     except Exception as e:
-#         return {
-#             "status": "error",
-#             "message": str(e)
-#         }
-
-
-
 @app.post("/control-plane/runtime-ingest")
 def runtime_ingest(payload: RuntimeIngestPayload):
     try:
-        service_id = payload.service_id
-
-        # Store state
-        INGESTED_RUNTIME_STATE[service_id] = payload.dict()
-
-        # Decision mapping
-        decision_request = DecisionRequest(
-            event_type=normalize_event_type(payload.issue_type),
-            cpu=payload.metrics.get("cpu", 0),
-            memory=payload.metrics.get("memory", 0),
-            environment="DEV"
-        )
-
-        decision = DecisionEngine.decide(decision_request)
-
-        action = decision.selected_action
-
-        # 🔥 GOVERNANCE CHECK
-        allowed, reason = enforce_action_scope(action, "DEV")
-
-        if not allowed:
+        # Use trace_id supplied by upstream. Do NOT generate locally.
+        trace_id = payload.trace_id
+        if not trace_id:
             return {
-                "execution_id": str(decision.decision_id),
+                "status": "error",
+                "message": "trace_id must be provided by upstream",
+            }
+        service_id = payload.service_id
+        action = payload.action
+
+        gate = validate_execution_gate(
+            {
+                "service_id": service_id,
+                "action": action,
+                "trace_id": trace_id,
+                "_source": "api_runtime_ingest",
+            }
+        )
+        if not gate["allow"]:
+            return {
                 "status": "blocked",
-                "reason": reason,
-                "action": action
+                "reason": "validation_failed",
+                "trace_id": trace_id,
             }
 
-        # 🔥 EXECUTION
-        success, exec_response = execute_action(action, service_id)
+        INGESTED_RUNTIME_STATE[service_id] = payload.dict()
+        execution_result = execute({"service_id": service_id, "action": action, "trace_id": trace_id})
 
         return {
-            "execution_id": str(decision.decision_id),
-            "status": "executed" if success else "failed",
-            "reason": decision.reason,
+            "service_id": service_id,
             "action": action,
-            "execution_response": exec_response
+            "status": execution_result.get("status", "success"),
+            "execution_id": execution_result.get("execution_id"),
+            "verified": execution_result.get("verified", False),
+            "trace_id": trace_id,
         }
 
     except Exception as e:

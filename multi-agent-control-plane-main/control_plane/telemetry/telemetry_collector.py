@@ -4,6 +4,8 @@ import time
 import requests
 from datetime import datetime
 
+from pravah_stream.stream import emit
+
 TELEMETRY_FILE = "telemetry.json"
 
 # HEALTH_URL = "http://localhost:8000/health"
@@ -44,13 +46,24 @@ def collect():
         "health_endpoint_status": get_health()
     }
 
+    emit({
+        "trace_id": "telemetry",
+        "execution_id": "telemetry",
+        "timestamp": data["timestamp"],
+        "source": "telemetry",
+        "signal_type": "verification",
+        "payload": data,
+    })
+
     return data
 
 
-def run():
+def run(iterations=1, interval_seconds=5):
 
-    while True:
+    if iterations <= 0:
+        raise ValueError("iterations must be >= 1 in loopless mode")
 
+    for i in range(iterations):
         telemetry = collect()
 
         with open(TELEMETRY_FILE, "w") as f:
@@ -58,8 +71,9 @@ def run():
 
         print("Telemetry Updated:", telemetry)
 
-        time.sleep(5)
+        if i < iterations - 1:
+            time.sleep(interval_seconds)
 
 
 if __name__ == "__main__":
-    run()
+    run(iterations=1)
