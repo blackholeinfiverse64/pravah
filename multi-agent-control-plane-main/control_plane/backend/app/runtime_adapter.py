@@ -8,15 +8,15 @@ if str(REPO_ROOT) not in sys.path:
 CONTROL_PLANE_ROOT = REPO_ROOT / "control_plane"
 if str(CONTROL_PLANE_ROOT) not in sys.path:
     sys.path.append(str(CONTROL_PLANE_ROOT))
-from app.config import CPU_SCALE_UP_THRESHOLD
+from .config import CPU_SCALE_UP_THRESHOLD
 from monitoring.runtime_poller import RuntimePoller
-from app.decision_engine import DecisionEngine
-from app.schemas import DecisionRequest, Environment, EventType
+from .decision_engine import DecisionEngine
+from .schemas import DecisionRequest, Environment, EventType
 # from .schemas import DecisionRequest
 from executor.safe_executor import execute_action
 import json, os
 from datetime import datetime
-from app.app_registry import load_apps
+from .app_registry import load_apps
 from monitoring.runtime_poller import poll_all_services
 
 def map_runtime_to_decision(runtime_payload: dict) -> DecisionRequest:

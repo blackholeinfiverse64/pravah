@@ -1,134 +1,117 @@
-SECTION: METRICS OUTPUT
+# REVIEW_PACKET — PRAVAH FINAL
 
-[{"issue_detected":false,"issue_type":"none","metrics":{"cpu":0.03,"error_rate":0.0,"memory":0.43,"uptime":1774850130},"recommended_action":"noop","service_id":"executer","status":"healthy","timestamp":"2026-03-30T05:55:30Z"},{"issue_detected":false,"issue_type":"none","metrics":{"cpu":0.03,"error_rate":0.0,"memory":0.43,"uptime":1774850130},"recommended_action":"noop","service_id":"web1","status":"healthy","timestamp":"2026-03-30T05:55:30Z"},{"issue_detected":false,"issue_type":"none","metrics":{"cpu":0.03,"error_rate":0.0,"memory":0.43,"uptime":1774850130},"recommended_action":"noop","service_id":"web2","status":"healthy","timestamp":"2026-03-30T05:55:30Z"}]
----
-
-SECTION: RUNTIME PAYLOAD
-
-{"app_id":"monitor-service","cpu_usage":0.04,"environment":"prod","error_rate":0.0,"health_score":1.0,"memory_usage":0.42}
-
----
-
-SECTION: EXECUTION RESPONSE
-
-{"action":"restart","execution_id":"afd2ff38-3202-4468-9869-c7145651304d","reason":"DOCKER_ERROR: Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?","status":"failed","verified":false}
+**System:** Pravah
+**Server:** 54.156.236.10
+**Domain:** pravah.blackholeinfiverse.com
+**Validated:** 2026-04-29
+**Status:** Integration-ready
 
 ---
 
-SECTION: LOGS
+## SYSTEM DEFINITION
 
-monitor.log:
-
-10.244.0.1 - - [30/Mar/2026 05:55:20] "GET / HTTP/1.1" 404 -
-10.244.0.1 - - [30/Mar/2026 05:55:22] "GET /favicon.ico HTTP/1.1" 404 -
-{"timestamp": "2026-03-30T05:55:30Z", "event": "DETECTION", "service_id": "executer", "metrics": {"cpu": 0.03, "memory": 0.43, "error_rate": 0.0, "uptime": 1774850130}, "status": "healthy", "issue_type": "none", "action": "noop"}
-{"timestamp": "2026-03-30T05:55:30Z", "event": "DETECTION", "service_id": "web1", "metrics": {"cpu": 0.03, "memory": 0.43, "error_rate": 0.0, "uptime": 1774850130}, "status": "healthy", "issue_type": "none", "action": "noop"}
-{"timestamp": "2026-03-30T05:55:30Z", "event": "DETECTION", "service_id": "web2", "metrics": {"cpu": 0.03, "memory": 0.43, "error_rate": 0.0, "uptime": 1774850130}, "status": "healthy", "issue_type": "none", "action": "noop"}
-10.244.0.1 - - [30/Mar/2026 05:55:30] "GET /metrics HTTP/1.1" 200 -
-10.244.0.1 - - [30/Mar/2026 05:59:03] "GET /internal/runtime-payload HTTP/1.1" 200 -
+Pravah is a non-interpretive, trace-complete observability layer.
+It observes events across Core → Sarathi → Executer and emits flat, trace-linked signals.
+It does NOT interpret. It does NOT conclude. It does NOT infer.
 
 ---
 
-executer.log:
-
-{"timestamp":"2026-03-30T05:20:05Z","event":"ACTION_RECEIVED","service_id":"web1","action":"restart","result":"incoming","mode":"docker"}
-{"timestamp":"2026-03-30T05:20:05Z","event":"ACTION_EXECUTED","service_id":"web1","action":"restart","result":"Simulated restart of web1","mode":"docker"}
-{"timestamp":"2026-03-30T05:20:06Z","event":"VERIFICATION","service_id":"web1","action":"restart","result":"success","mode":"docker"}
-
----
-
-SECTION: KUBERNETES / DOCKER EXECUTION PROOF
-
-
-Docker:
-$ docker restart web1
-web1
-
-Kubernetes:
-kubectl rollout restart deployment/web1
-deployment.apps/web1 restarted
+## ARCHITECTURE
+Core/Web  →  [login event + trace_id via X-TRACE-ID]
+→  Monitor /track-event  →  signal_queue  →  SSE stream
+Sarathi   →  [decision signal]    →  Monitor
+→  [enforcement signal] →  Monitor
+→  Executer /execute-action (X-CALLER: sarathi)
+Executer  →  [execution signal]   →  Monitor
+→  kubectl patch
+→  [verification signal] →  Monitor
 
 ---
 
-SECTION: FULL EXECUTION TRACE
+## ENTRY POINT
 
-STEP 1: FAILURE
-web1 manually stopped / degraded condition simulated
-
-STEP 2: DETECTION
-/metrics →
-status = critical
-issue_type = crash
-recommended_action = restart
-
-STEP 3: PAYLOAD
-/internal/runtime-payload →
-health_score = 0.5
-
-STEP 4: DECISION
-Decision Engine →
-action = restart
-
-STEP 5: EXECUTION
-POST /execute-action →
-action accepted
-
-STEP 6: EXECUTION RESULT
-restart triggered (docker / kubernetes)
-
-STEP 7: VERIFICATION
-verified = true
+All flows begin at Core (Web layer).
+Core supplies trace_id via X-TRACE-ID header.
+Pravah never generates trace_id silently.
 
 ---
 
-SECTION: FAILURE TEST RESULTS
+## STREAM FORMAT (LOCKED)
 
-Test 1: Invalid Action
+Each SSE data: line = exactly one flat independent signal. No wrappers. No blobs.
 
-Input:
-{ "service_id": "web1", "action": "invalid" }
-
-Output:
-status = failed
-reason = invalid action
-
----
-
-Test 2: Cooldown Protection
-
-Action sent twice quickly
-
-Output:
-status = blocked
-reason = cooldown active
-
----
-
-Test 3: Service Crash
-
-web1 stopped
-
-/metrics output:
-status = critical
-issue_type = crash
+```json
+{
+  "signal_type":  "...",
+  "service":      "...",
+  "metric":       "status",
+  "value":        "RUNNING | SUCCESS | FAILURE",
+  "severity":     "INFO | WARN | CRITICAL",
+  "timestamp":    1777450932,
+  "trace_id":     "5d050c8c-c880-4e6d-9a01-8274556f30ec",
+  "trace_origin": "core",
+  "trace_hash":   "3ba9693acb64c1ca8124e49458b96723e9e5afb199a10226cf5e88872762ed32",
+  "source":       "core",
+  "emitted_at":   "2026-04-29T08:23:29.934096Z"
+}
+```
 
 ---
 
-Test 4: Execution Failure
+## SIGNAL ORDER FOR ONE TRACE
 
-Invalid deployment / container name
+login_detected      ← Core
+user_interaction    ← Core
+decision            ← Sarathi (ALLOW + policy_reference)
+enforcement         ← Sarathi (validated — before execution)
+execution           ← Executer (RUNNING — no success implied)
+verification        ← Executer (SUCCESS/FAILURE — confirmed)
+execution_completed ← Executer (final state)
 
-Output:
-status = failed
-verified = false
+
+---
+
+## WHAT WAS REMOVED
+
+| Removed | Reason |
+|---------|--------|
+| `causal_chain` | Interpretation — inferred from data |
+| `correlation{}` | Grouping — inferred across events |
+| `signals[]` wrapper | Blob format — violates flat signal rule |
 
 ---
 
-SECTION: SYSTEM NOTES
+## SECURITY
 
-• Execution layer supports both Docker and Kubernetes via EXECUTION_MODE
-• No crashes — all failures return structured responses
-• Logs are structured JSON for deterministic parsing
-• Full control loop verified: Detection → Decision → Execution → Verification
+- `/execute-action` requires `X-CALLER: sarathi` header
+- Missing header → HTTP 403 `{"error":"unauthorized"}`
+- Proven live: `curl -X POST http://54.156.236.10:30003/execute-action` → 403
 
 ---
+
+## PROOF FILES
+
+- `TRACE_VISIBILITY_PROOF.md`
+- `SARATHI_STREAM_PROOF.md`
+- `EXECUTION_VERIFICATION_PROOF.md`
+- `FULL_TRACE_STREAM_PROOF.md`
+- `review_packets/pravah_final_compliance.md`
+
+---
+
+## REPRODUCTION (curl only)
+
+```bash
+# Terminal 1 — open stream
+curl -H "Host: pravah.blackholeinfiverse.com" -N http://54.156.236.10/signals/stream
+
+# Terminal 2
+TRACE=$(uuidgen)
+
+curl -X POST http://54.156.236.10:30001/login \
+  -H "X-TRACE-ID: $TRACE" -d "user_id=raj"
+
+curl -X POST http://54.156.236.10:30005/decision \
+  -H "Content-Type: application/json" \
+  -d "{\"trace_id\":\"$TRACE\",\"service_id\":\"web1-blue\",\"action_type\":\"restart\",\"payload\":{\"decision_score\":0.9}}"
+```

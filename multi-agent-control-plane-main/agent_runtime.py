@@ -51,7 +51,9 @@ from control_plane.core.runtime_event_validator import RuntimeEventValidator
 
 from core_hooks.signal_builder import build_base_signal
 from executer.runner import execute
-from sarathi.headers import SARATHI_HEADER, SARATHI_VALUE
+from sarathi.router import build_sarathi_headers
+from contracts.decision_contract import validate_decision_contract
+from contracts.execution_contract import build_execution_contract
 
 
 def call_decision_engine(runtime_payload):
@@ -660,9 +662,9 @@ class AgentRuntime:
             self.logger.error(f"External decision failed: {e}")
 
             decision = {
-                "rl_action": 0,
-                "action_name": "noop",
-                "source": "fallback_safe",
+                "rl_action": None,
+                "action_name": "invalid",
+                "source": "external_api_error",
                 "confidence": 0.0,
                 "reason": "external_api_failed",
                 "execution_result": {},
@@ -680,7 +682,7 @@ class AgentRuntime:
             2: "scale_up",
             3: "scale_down",
             4: "rollback"
-        }.get(rl_action, "noop")
+        }.get(rl_action, "invalid")
 
     
     def _enforce(self, decision: Dict[str, Any]) -> Dict[str, Any]:
@@ -748,8 +750,7 @@ class AgentRuntime:
                 return {
                     "allowed": False,
                     "reason": governance_result.reason,
-                    "block_type": "governance",
-                    "safe_action": {"action": "noop"}
+                    "block_type": "governance"
                 }
 
             if execution.get("status") == "refused":
@@ -816,10 +817,27 @@ class AgentRuntime:
             # Add execution context to signal
             signal['context'] = context
             signal['input_data'] = input_data
+
+            execution_contract = build_execution_contract(
+                decision_contract=validate_decision_contract({
+                    'decision_type': 'execution',
+                    'action': action_name,
+                    'parameters': {
+                        'service_id': service_id,
+                        'trace_id': trace_id,
+                    },
+                    'version': safe_action.get('version', 'v1'),
+                }),
+                execution_payload=signal,
+                approved_by='sarathi',
+            )
+
+            signal['execution_id'] = execution_contract.execution_id
+            signal['execution_contract'] = execution_contract.model_dump(mode='json')
             
-            # Call executer with sarathi header (executer will validate caller and inject execution_id)
+            # Call executer with signed Sarathi service headers (executer will validate identity and inject execution_id)
             try:
-                headers = {SARATHI_HEADER: SARATHI_VALUE}
+                headers = build_sarathi_headers(signal)
                 execution_result = execute(signal, headers)
                 # execute() emits to pravah_stream and returns the modified signal
                 if execution_result:

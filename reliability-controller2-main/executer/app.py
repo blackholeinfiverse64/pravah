@@ -1,187 +1,116 @@
 from flask import Flask, request, jsonify
-import uuid
-import json
-import logging
-from datetime import datetime, timedelta
-import subprocess
-import os
+import time, subprocess, uuid, requests, os
+from governance import validate_deployment_request
 
 app = Flask(__name__)
 
-# ---------------- CONFIG ----------------
-EXECUTION_MODE = os.getenv("EXECUTION_MODE", "docker")  # docker | kubernetes
+MONITOR_URL = os.getenv("MONITOR_URL", "http://monitor-service:5004/track-event")
 
-logging.basicConfig(
-    filename="executer.log",
-    level=logging.INFO,
-    format='%(message)s'
-)
-
-VALID_ACTIONS = ["restart", "scale_up", "scale_down", "noop"]
-
-cooldowns = {}
-COOLDOWN_TIME = 10  # seconds
+ALLOWED_SERVICES = ["web1-blue", "web1-green", "web2-blue", "web2-green"]
+ALLOWED_ACTIONS  = ["restart", "scale"]
 
 
-# ---------------- LOGGER ----------------
-def log_event(event_type, service_id, action, result):
-    log = {
-        "timestamp": datetime.utcnow().isoformat(),
-        "event": event_type,
-        "service_id": service_id,
-        "action": action,
-        "result": result,
-        "mode": EXECUTION_MODE
+def execute_action(service, action):
+    if service not in ALLOWED_SERVICES:
+        return {"status": "failed", "error": "invalid service"}
+
+    if action not in ALLOWED_ACTIONS:
+        return {"status": "failed", "error": "invalid action"}
+
+    cmd = [
+        "kubectl", "patch", f"deployment/{service}", "-n", "prod",
+        "-p", '{"spec":{"template":{"metadata":{"annotations":{"restart-time":"' + str(time.time()) + '"}}}}}'
+    ]
+
+    start = time.time()
+    res = subprocess.run(cmd, capture_output=True, text=True)
+
+    return {
+        "status":  "success" if res.returncode == 0 else "failed",
+        "output":  res.stdout.strip(),
+        "error":   res.stderr.strip(),
+        "latency": time.time() - start
     }
-    logging.info(json.dumps(log))
 
 
-# ---------------- VERIFY ----------------
-def verify_deployment(service_id):
-    try:
-        if EXECUTION_MODE == "kubernetes":
-            result = subprocess.run(
-                ["kubectl", "get", "pods"],
-                capture_output=True,
-                text=True
-            )
-            return service_id in result.stdout
-
-        elif EXECUTION_MODE == "docker":
-            result = subprocess.run(
-                ["docker", "ps"],
-                capture_output=True,
-                text=True
-            )
-            return service_id in result.stdout
-
-        return False
-    except:
-        return False
-
-
-# ---------------- EXECUTION ----------------
-def execute_real_action(service_id, action):
-    try:
-        # -------- KUBERNETES --------
-        if EXECUTION_MODE == "kubernetes":
-
-            if action == "restart":
-                cmd = ["kubectl", "rollout", "restart", f"deployment/{service_id}"]
-
-            elif action == "scale_up":
-                cmd = ["kubectl", "scale", f"deployment/{service_id}", "--replicas=2"]
-
-            elif action == "scale_down":
-                cmd = ["kubectl", "scale", f"deployment/{service_id}", "--replicas=1"]
-
-            else:
-                return "noop"
-
-            result = subprocess.run(cmd, capture_output=True, text=True)
-
-            if result.returncode != 0:
-                return f"K8S_ERROR: {result.stderr.strip()}"
-
-            return result.stdout.strip()
-
-        # -------- DOCKER --------
-        elif EXECUTION_MODE == "docker":
-
-            if action == "restart":
-                cmd = ["docker", "restart", service_id]
-
-            elif action == "scale_up":
-                return f"DOCKER_SCALE_UP simulated for {service_id}"
-
-            elif action == "scale_down":
-                return f"DOCKER_SCALE_DOWN simulated for {service_id}"
-
-            else:
-                return "noop"
-
-            result = subprocess.run(cmd, capture_output=True, text=True)
-
-            if result.returncode != 0:
-                return f"DOCKER_ERROR: {result.stderr.strip()}"
-
-            return result.stdout.strip()
-
-        # -------- FALLBACK --------
-        else:
-            return "UNKNOWN_EXECUTION_MODE"
-
-    except Exception as e:
-        return f"EXCEPTION: {str(e)}"
-
-
-# ---------------- EXECUTE API ----------------
 @app.route("/execute-action", methods=["POST"])
-def execute_action():
-    data = request.get_json()
+def execute():
 
-    service_id = data.get("service_id")
-    action = data.get("action")
+    # SECURITY LOCK — only sarathi can call this
+    if request.headers.get("X-CALLER") != "sarathi":
+        return jsonify({"error": "unauthorized"}), 403
+
+    data = request.get_json(force=True)
+
+    trace_id = data.get("trace_id")
+    service  = data.get("service_id")
+    action   = data.get("action")
+
+    if not trace_id:
+        return jsonify({"error": "trace_id required"}), 400
+
+    if validate_deployment_request(service, action) == "BLOCK":
+        return jsonify({"status": "blocked_by_governance", "trace_id": trace_id})
 
     execution_id = str(uuid.uuid4())
 
-    log_event("ACTION_RECEIVED", service_id, action, "incoming")
+    # SIGNAL 3 — execution signal (observed fact: action was attempted)
+    # Does NOT imply success — that comes from verification
+    requests.post(MONITOR_URL, json={
+        "user_id":      "system",
+        "event_type":   "execution_started",
+        "timestamp":    int(time.time()),
+        "session_id":   "system",
+        "trace_id":     trace_id,
+        "execution_id": execution_id,
+        "service":      service,
+        "action":       action,
+        "metadata":     {"source": service}
+    })
 
-    # VALIDATION
-    if action not in VALID_ACTIONS:
-        log_event("ACTION_REJECTED", service_id, action, "invalid")
+    result = execute_action(service, action)
 
-        return jsonify({
-            "execution_id": execution_id,
-            "status": "failed",
-            "action": action,
-            "reason": "invalid action",
-            "verified": False
-        }), 400
+    # SIGNAL 4 — verification signal (observed fact: outcome confirmed)
+    # Separate from execution — verification confirms what actually happened
+    verification_result = "SUCCESS" if result["status"] == "success" else "FAILURE"
 
-    # COOLDOWN
-    now = datetime.utcnow()
-    if service_id in cooldowns and now < cooldowns[service_id]:
-        log_event("ACTION_BLOCKED", service_id, action, "cooldown")
+    requests.post(MONITOR_URL, json={
+        "user_id":      "system",
+        "event_type":   "verification_done",
+        "timestamp":    int(time.time()),
+        "session_id":   "system",
+        "trace_id":     trace_id,
+        "execution_id": execution_id,
+        "result":       verification_result,
+        "service":      service,
+        "metadata":     {"source": service}
+    })
 
-        return jsonify({
-            "execution_id": execution_id,
-            "status": "blocked",
-            "action": action,
-            "reason": "cooldown active",
-            "verified": False
-        }), 429
-
-    cooldowns[service_id] = now + timedelta(seconds=COOLDOWN_TIME)
-
-    log_event("ACTION_ACCEPTED", service_id, action, "valid")
-
-    # EXECUTION
-    result = execute_real_action(service_id, action)
-
-    status = "executed" if "ERROR" not in result and "EXCEPTION" not in result else "failed"
-
-    log_event("ACTION_EXECUTED", service_id, action, result)
-
-    # VERIFICATION
-    verified = verify_deployment(service_id)
-
-    log_event("VERIFICATION", service_id, action, "success" if verified else "failed")
+    # Legacy execution_done for backward compat
+    requests.post(MONITOR_URL, json={
+        "user_id":      "system",
+        "event_type":   "execution_done",
+        "timestamp":    int(time.time()),
+        "session_id":   "system",
+        "trace_id":     trace_id,
+        "execution_id": execution_id,
+        "service":      service,
+        "action":       action,
+        "status":       result["status"],
+        "latency":      result.get("latency"),
+        "metadata":     {"source": service}
+    })
 
     return jsonify({
         "execution_id": execution_id,
-        "status": status,
-        "action": action,
-        "reason": result,
-        "verified": verified
+        "trace_id":     trace_id,
+        **result
     })
 
 
-# ---------------- HEALTH ----------------
 @app.route("/health")
 def health():
-    return jsonify({"status": "healthy", "mode": EXECUTION_MODE})
+    return {"status": "ok"}
 
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5003)
+app.run(host="0.0.0.0", port=5003)

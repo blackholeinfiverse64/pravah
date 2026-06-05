@@ -25,7 +25,7 @@ import threading
 root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
-from core_hooks.middleware import inject_trace
+from core_hooks.middleware import verify_request_trace
 from jsonschema import ValidationError, validate
 from core_hooks.rules import validate_trace
 
@@ -153,8 +153,15 @@ def runtime_decision():
             "error": "Request body must be valid JSON",
         }), 400
 
-    # [OK] Inject trace (single point)
-    payload = inject_trace(payload)
+    try:
+        payload = verify_request_trace(payload)
+
+    except Exception as exc:
+        return jsonify({
+            "status": "error",
+            "error": "Trace verification failed",
+            "details": str(exc),
+        }), 401
 
     # [OK] Enforce trace
     try:

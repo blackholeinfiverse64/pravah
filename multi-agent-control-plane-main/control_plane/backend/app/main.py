@@ -1,33 +1,87 @@
 from collections import deque
 from datetime import datetime, timezone
 import os
+import sys
 from pathlib import Path
 from typing import Any
-import sys
 import json
 import uuid
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .dashboard_api import get_dashboard_state
-from app.dashboard_api import router as dashboard_router
+from .dashboard_api import router as dashboard_router
 from pydantic import BaseModel, Field
 from typing import Dict, Any
 from datetime import datetime
-from control_plane.executor.executor import execute
-from control_plane.executor.governance_gate import validate_execution_gate
+from contracts.decision_contract import validate_decision_contract
+from control_plane.core.execution_lineage import (
+    replay_execution_lineage,
+    verify_execution_lineage,
+)
+from pydantic import BaseModel
+from typing import List, Optional
 
 
 
 
+
+
+from typing import Any, Dict
+from pydantic import BaseModel
 
 class RuntimeIngestPayload(BaseModel):
     service_id: str
-    action: str
-    trace_id: str | None = None
-
+    timestamp: str
+    status: str
+    metrics: Dict[str, Any]
+    issue_detected: bool
+    issue_type: str
+    recommended_action: str
 
 # Stores latest state per service
 INGESTED_RUNTIME_STATE = {}
+
+try:
+    from .schemas import DecisionRequest, EventType, Environment
+    from .decision_engine import DecisionEngine
+except ImportError:
+    from schemas import DecisionRequest, EventType, Environment
+    from decision_engine import DecisionEngine
+
+def build_decision_request(payload: RuntimeIngestPayload) -> DecisionRequest:
+    from control_plane.core.action_governance import normalize_environment
+    env_name = normalize_environment(os.getenv("ENVIRONMENT", "DEV"))
+    event_map = {
+        "high_cpu": EventType.HIGH_CPU,
+        "high_memory": EventType.HIGH_MEMORY,
+        "latency": EventType.LATENCY,
+        "high_latency": EventType.LATENCY,
+    }
+    
+    cpu_val = payload.metrics.get("cpu", 0)
+    if isinstance(cpu_val, float) and cpu_val <= 1.0:
+        cpu_val *= 100
+    cpu = int(cpu_val)
+
+    memory_val = payload.metrics.get("memory", 0)
+    if isinstance(memory_val, float) and memory_val <= 1.0:
+        memory_val *= 100
+    memory = int(memory_val)
+
+    return DecisionRequest(
+        environment=Environment(env_name),
+        event_type=event_map.get(
+            payload.issue_type.lower(),
+            EventType.HIGH_CPU,
+        ),
+        cpu=cpu,
+        memory=memory,
+    )
 
 
 
@@ -647,12 +701,60 @@ import requests
 
 def execute_action(action: str, service_id: str):
     try:
+        from control_plane.core.action_governance import ActionGovernance, normalize_environment
+        from contracts.decision_contract import validate_decision_contract
+
+        env = normalize_environment(os.getenv("ENVIRONMENT", "dev")).lower()
+        governance = ActionGovernance(env=env)
+        decision = validate_decision_contract(
+            {
+                "decision_type": "execution",
+                "action": action,
+                "parameters": {
+                    "service_id": service_id,
+                    "source": "backend_api",
+                },
+                "version": governance.POLICY_VERSION,
+            }
+        )
+        governance_decision = governance.evaluate_contract(
+            decision=decision,
+            context={
+                "service_id": service_id,
+                "app_name": service_id,
+                "env": env,
+                "source": "backend_api",
+            },
+            source="backend_api",
+        )
+
+        if governance_decision.should_block:
+            return False, {
+                "status": "rejected",
+                "action": action,
+                "service_id": service_id,
+                "reason": governance_decision.reason,
+                "admission_state": governance_decision.admission_state,
+                "rejection_code": governance_decision.rejection_code,
+                "policy_snapshot": {
+                    "policy_id": governance_decision.policy_id,
+                    "policy_version": governance_decision.policy_version,
+                    "policy_hash": governance_decision.policy_hash,
+                },
+            }
+
+        from security.internal_requests import build_signed_headers
+        import requests
+
+        payload = {
+            "action": action,
+            "service_id": service_id
+        }
+        headers = build_signed_headers(service_id, payload)
         response = requests.post(
             "http://localhost:5003/execute-action",
-            json={
-                "action": action,
-                "service_id": service_id
-            },
+            json=payload,
+            headers=headers,
             timeout=3
         )
 
@@ -846,6 +948,156 @@ def api_health():
     return {"status": "ok"}
 
 
+class ReplayEvent(BaseModel):
+    event_id: str
+    trace_id: Optional[str] = None
+    execution_id: str
+    previous_hash: str
+    parent_hash: Optional[str] = None
+    timestamp: float
+    state: str
+    execution_hash: Optional[str]
+    source: Optional[str]
+    details: dict
+    payload_hash: Optional[str] = None
+    signer: Optional[str] = None
+    signature: Optional[str] = None
+    trace_hash: Optional[str] = None
+    event_hash: Optional[str]
+
+
+class ReplayResponse(BaseModel):
+    execution_id: str
+    valid: bool
+    final_state: Optional[str]
+    execution_state_history: List[str]
+    events: List[ReplayEvent]
+    execution_hash: Optional[str]
+    runtime_attestation: Optional[Dict[str, Any]] = None
+
+
+class VerifyResponse(BaseModel):
+    execution_id: str
+    valid: bool
+    hash_chain_valid: bool
+    fsm_valid: bool
+    error: Optional[str] = None
+    runtime_attestation_valid: Optional[bool] = None
+    runtime_attestation_error: Optional[str] = None
+
+
+@app.get("/api/lineage/{execution_id}", response_model=ReplayResponse)
+def api_replay_lineage(
+    execution_id: str,
+    state: Optional[str] = None,
+    start_ts: Optional[int] = None,
+    end_ts: Optional[int] = None,
+) -> ReplayResponse:
+    """Deterministic, read-only replay of the execution lineage.
+
+    Filters: `state`, `start_ts`, `end_ts` (unix seconds).
+    This endpoint reads the journal only and never mutates runtime.
+    """
+    result = replay_execution_lineage(execution_id)
+
+    # events may be empty; apply simple filters
+    events = result.get("events", [])
+    def _keep(ev: dict) -> bool:
+        if state and ev.get("state") != state:
+            return False
+        ts = int(ev.get("timestamp") or 0)
+        if start_ts and ts < start_ts:
+            return False
+        if end_ts and ts > end_ts:
+            return False
+        return True
+
+    filtered = [ev for ev in events if _keep(ev)]
+
+    # Extract runtime attestation from APPROVED event details if present
+    runtime_attestation = None
+    for ev in filtered:
+        details = ev.get("details") or {}
+        if details.get("runtime_attestation"):
+            runtime_attestation = details.get("runtime_attestation")
+            break
+
+    return ReplayResponse(
+        execution_id=execution_id,
+        valid=result.get("valid", False),
+        final_state=(filtered[-1]["state"] if filtered else None),
+        execution_state_history=[ev["state"] for ev in filtered],
+        events=filtered,
+        execution_hash=result.get("execution_hash"),
+        runtime_attestation=runtime_attestation,
+    )
+
+
+@app.get("/api/lineage/{execution_id}/verify", response_model=VerifyResponse)
+def api_verify_lineage(execution_id: str) -> VerifyResponse:
+    """Verify lineage integrity: hash chain and FSM transitions.
+
+    Returns structured booleans rather than raising errors to aid operators.
+    """
+    try:
+        replay_execution_lineage(execution_id)
+        # Verify runtime attestation if present
+        runtime_attestation_valid = None
+        runtime_attestation_error = None
+        try:
+            replay_result = replay_execution_lineage(execution_id)
+            for ev in replay_result.get("events", []):
+                details = ev.get("details") or {}
+                ra = details.get("runtime_attestation")
+                if ra:
+                    from contracts.runtime_attestation import verify_runtime_attestation
+
+                    ok, msg = verify_runtime_attestation(ra)
+                    runtime_attestation_valid = ok
+                    runtime_attestation_error = None if ok else msg
+                    break
+        except Exception:
+            # leave attestation fields as None when replay fails here
+            runtime_attestation_valid = None
+            runtime_attestation_error = None
+        return VerifyResponse(
+            execution_id=execution_id,
+            valid=True,
+            hash_chain_valid=True,
+            fsm_valid=True,
+            error=None,
+            runtime_attestation_valid=runtime_attestation_valid,
+            runtime_attestation_error=runtime_attestation_error,
+        )
+    except Exception as e:
+        msg = str(e)
+        hash_ok = True
+        fsm_ok = True
+        # Classify common failure modes
+        if any(
+            token in msg.lower()
+            for token in (
+                "hash mismatch",
+                "chain broken",
+                "unsigned",
+                "signature",
+                "duplicate",
+                "timestamp",
+            )
+        ):
+            hash_ok = False
+        if "illegal" in msg.lower() or "replay start state" in msg.lower() or "continuation after terminal" in msg.lower():
+            fsm_ok = False
+
+        return VerifyResponse(
+            execution_id=execution_id,
+            valid=False,
+            hash_chain_valid=hash_ok,
+            fsm_valid=fsm_ok,
+            error=msg,
+        )
+
+
 
 
 
@@ -854,49 +1106,104 @@ def api_health():
 
 @app.post("/control-plane/runtime-ingest")
 def runtime_ingest(payload: RuntimeIngestPayload):
-    try:
-        # Use trace_id supplied by upstream. Do NOT generate locally.
-        trace_id = payload.trace_id
-        if not trace_id:
-            return {
-                "status": "error",
-                "message": "trace_id must be provided by upstream",
-            }
-        service_id = payload.service_id
-        action = payload.action
+    from control_plane.core.trace_logger import log_event, reset_trace, ensure_complete_trace
 
-        gate = validate_execution_gate(
-            {
-                "service_id": service_id,
-                "action": action,
-                "trace_id": trace_id,
-                "_source": "api_runtime_ingest",
-            }
-        )
-        if not gate["allow"]:
-            return {
-                "status": "blocked",
-                "reason": "validation_failed",
-                "trace_id": trace_id,
-            }
+    # 1. Reset trace and log detection
+    reset_trace()
+    log_event("detection", {
+        "issue": payload.issue_type,
+        "service_id": payload.service_id,
+        "metrics": payload.metrics
+    })
 
-        INGESTED_RUNTIME_STATE[service_id] = payload.dict()
-        execution_result = execute({"service_id": service_id, "action": action, "trace_id": trace_id})
-
+    INGESTED_RUNTIME_STATE[payload.service_id] = payload.model_dump()
+    decision_request = build_decision_request(payload)
+    decision = DecisionEngine.decide(decision_request)
+    
+    # 2. Log payload_emitted
+    log_event("payload_emitted", {
+        "service_id": payload.service_id,
+        "action": decision.selected_action
+    })
+    
+    # 3. Log action_received
+    log_event("action_received", {
+        "service_id": payload.service_id,
+        "action": decision.selected_action
+    })
+    
+    success, execution_result = execute_action(
+        action=decision.selected_action,
+        service_id=payload.service_id,
+    )
+    
+    if not success:
+        if isinstance(execution_result, dict):
+            execution_id = execution_result.get("execution_id")
+            status = "blocked"
+            reason = execution_result.get("reason", "governance_block")
+        else:
+            execution_id = None
+            status = "blocked"
+            reason = str(execution_result)
+        
+        # 4. Log execution_result (failure/blocked)
+        log_event("execution_result", {
+            "service_id": payload.service_id,
+            "action": decision.selected_action,
+            "status": status,
+            "error": reason,
+            "execution_id": execution_id
+        })
+        
+        # 5. Log verification (failed)
+        log_event("verification", {
+            "verified": False,
+            "reason": reason
+        })
+        ensure_complete_trace()
+        
         return {
-            "service_id": service_id,
-            "action": action,
-            "status": execution_result.get("status", "success"),
-            "execution_id": execution_result.get("execution_id"),
-            "verified": execution_result.get("verified", False),
-            "trace_id": trace_id,
+            "service_id": payload.service_id,
+            "decision": decision.model_dump(mode="json"),
+            "execution": {
+                "execution_id": execution_id,
+                "status": status,
+                "reason": reason,
+                "action": decision.selected_action,
+            },
         }
 
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+    # 4. Log execution_result (success)
+    exec_id = execution_result.get("execution_id") if isinstance(execution_result, dict) else None
+    status = execution_result.get("status", "executed") if isinstance(execution_result, dict) else "executed"
+    reason = execution_result.get("reason") if isinstance(execution_result, dict) else None
+    verified = execution_result.get("verified", False) if isinstance(execution_result, dict) else False
+
+    log_event("execution_result", {
+        "service_id": payload.service_id,
+        "action": decision.selected_action,
+        "status": status,
+        "execution_id": exec_id
+    })
+    
+    # 5. Log verification
+    log_event("verification", {
+        "verified": verified,
+        "reason": reason
+    })
+    ensure_complete_trace()
+
+    return {
+        "service_id": payload.service_id,
+        "decision": decision.model_dump(mode="json"),
+        "execution": {
+            "execution_id": exec_id,
+            "status": status,
+            "reason": reason,
+            "action": execution_result.get("action") if isinstance(execution_result, dict) else decision.selected_action,
+        },
+    }
 
 
 

@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+data/q_table.json
+*.log
+.env
+venv/
+env/
+.git/

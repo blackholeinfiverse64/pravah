@@ -41,7 +41,7 @@ class StateAdapter:
         }
         
         # 2. Log normalization event
-        from core.proof_logger import write_proof, ProofEvents
+        from control_plane.core.proof_logger import write_proof, ProofEvents
         write_proof(ProofEvents.RL_INPUT, {
             "mapped_payload": rl_request,
             "original_event_type": event.get("event_type")

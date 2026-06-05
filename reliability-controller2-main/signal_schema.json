@@ -1,0 +1,121 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "TANTRA Signal Schema",
+    "description": "Strict schema for all Pravah signals. No additional properties permitted. No string concatenation. All fields mandatory.",
+    "type": "object",
+  
+    "required": [
+      "signal_type",
+      "service",
+      "metric",
+      "value",
+      "severity",
+      "timestamp",
+      "trace_id"
+    ],
+  
+    "additionalProperties": false,
+  
+    "properties": {
+  
+      "signal_type": {
+        "type": "string",
+        "enum": [
+          "login_detected",
+          "user_interaction",
+          "decision_made",
+          "execution_completed",
+          "execution_failed",
+          "latency_spike",
+          "error_spike",
+          "deployment_success",
+          "deployment_failure",
+          "pod_crash",
+          "execution_failure"
+        ],
+        "description": "Categorical event classifier. Must be one of the defined enum values. No free-form strings. No concatenation."
+      },
+  
+      "service": {
+        "type": "string",
+        "enum": [
+          "web1-blue",
+          "web1-green",
+          "web2-blue",
+          "web2-green",
+          "sarathi",
+          "executer",
+          "monitor",
+          "application",
+          "kubernetes",
+          "cicd"
+        ],
+        "description": "Service identifier. Must be a named system component."
+      },
+  
+      "metric": {
+        "type": "string",
+        "enum": [
+          "latency",
+          "error_rate",
+          "status",
+          "restart_count",
+          "cpu",
+          "memory"
+        ],
+        "description": "The measured dimension."
+      },
+  
+      "value": {
+        "oneOf": [
+          {
+            "type": "number",
+            "minimum": 0
+          },
+          {
+            "type": "string",
+            "enum": ["SUCCESS", "FAILURE", "RUNNING"]
+          }
+        ]
+      },
+  
+      "severity": {
+        "type": "string",
+        "enum": ["INFO", "WARN", "CRITICAL"]
+      },
+  
+      "timestamp": {
+        "type": "integer",
+        "minimum": 1000000000
+      },
+  
+      "trace_id": {
+        "type": "string",
+        "minLength": 36,
+        "maxLength": 36,
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      }
+  
+    },
+  
+    "examples": [
+      {
+        "signal_type": "execution_completed",
+        "service": "web1-blue",
+        "metric": "status",
+        "value": "SUCCESS",
+        "severity": "INFO",
+        "timestamp": 1714200000,
+        "trace_id": "a1b2c3d4-0001-0002-0003-e5f6a7b8c9d0"
+      },
+      {
+        "signal_type": "latency_spike",
+        "service": "web2-green",
+        "metric": "latency",
+        "value": 850,
+        "severity": "CRITICAL",
+        "timestamp": 1714200060,
+        "trace_id": "b2c3d4e5-0002-0003-0004-f6a7b8c9d0e1"
+      }
+    ]
+  }

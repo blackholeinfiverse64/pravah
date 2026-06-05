@@ -7,12 +7,36 @@ The agent uses this module to determine when NOT to act, enforcing:
 2. Cooldown periods (minimum time between repeated actions)
 3. Repetition suppression (prevent action loops)
 """
-
 import time
+import hashlib
+import json
+import os
+import threading
 from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
 from collections import deque
 from enum import Enum
+
+from contracts.decision_contract import DecisionContract, validate_decision_contract
+from contracts.policy_snapshot import compute_policy_hash, PolicySnapshot
+from control_plane.security.deterministic_policy_engine import (
+    AdmissionState,
+    DeterministicPolicyEngine,
+    PolicyAdmissionRequest,
+    RejectionCode,
+)
+from control_plane.persistence import AppendOnlyLog
+
+
+def normalize_environment(value: str) -> str:
+    mapping = {
+        "dev": "DEV",
+        "stage": "STAGE",
+        "staging": "STAGE",
+        "prod": "PROD",
+        "production": "PROD",
+    }
+    return mapping[value.strip().lower()]
 
 
 class GovernanceReason(Enum):
@@ -29,13 +53,26 @@ class GovernanceDecision:
     should_block: bool
     reason: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
+    policy_id: Optional[str] = None
+    policy_version: Optional[str] = None
+    policy_hash: Optional[str] = None
+    admission_state: Optional[str] = None
+    rejection_code: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
+            'allowed': not self.should_block,
             'should_block': self.should_block,
             'governance_reason': self.reason,
-            'governance_details': self.details
+            'governance_details': self.details,
+            'admission_state': self.admission_state,
+            'rejection_code': self.rejection_code,
+            'policy_snapshot': {
+                'policy_id': self.policy_id,
+                'policy_version': self.policy_version,
+                'policy_hash': self.policy_hash,
+            },
         }
 
 
@@ -68,6 +105,8 @@ class ActionGovernance:
     # Repetition limits: max occurrences within time window
     DEFAULT_REPETITION_LIMIT = 3
     DEFAULT_REPETITION_WINDOW = 300  # 5 minutes
+    POLICY_ID = "action_governance_v1"
+    POLICY_VERSION = "v1"
     
     def __init__(
         self,
@@ -84,24 +123,83 @@ class ActionGovernance:
             repetition_limit: Max identical actions within window
             repetition_window: Time window for repetition check (seconds)
         """
-        self.env = env
+        self.env = normalize_environment(env).lower()
         self.cooldown_periods = cooldown_periods or self.DEFAULT_COOLDOWNS
         self.repetition_limit = repetition_limit
         self.repetition_window = repetition_window
-        
-        # Track last execution time for each action
-        self._last_execution: Dict[str, float] = {}
-        
-        # Track action history (sliding window)
-        self._action_history: deque = deque(maxlen=100)
-        
+
         # Environment-specific eligibility rules
         self._eligibility_rules = {
             'prod': ['noop', 'restart'],  # Production frozen mode: noop-first, restart only
             'stage': ['restart', 'noop', 'scale_up', 'scale_down'],  # Stage: safe actions
             'dev': ['restart', 'scale_up', 'noop', 'scale_down', 'rollback']  # Dev: all actions
         }
+        
+        self._lock = threading.Lock()
+        
+        # Track last execution time for each action
+        self._last_execution: Dict[str, float] = {}
+        
+        # Track action history (sliding window)
+        self._action_history: deque = deque(maxlen=100)
+
+        # Load persisted state
+        self._load_state()
+
+        self._policy_engine = DeterministicPolicyEngine(
+            policy_id=self.POLICY_ID,
+            runtime_policy_version=self.POLICY_VERSION,
+            policy_definition=self.get_config(),
+        )
+        
+        # Phase 3: Append-only persistence journal for deterministic replay
+        self._append_only_log = AppendOnlyLog(
+            log_path="logs/control_plane/append_only_log.jsonl"
+        )
     
+    def _load_state(self):
+        state_path = "logs/control_plane/governance_state.json"
+        with self._lock:
+            self._last_execution = {}
+            self._action_history = deque(maxlen=100)
+            if os.path.exists(state_path):
+                try:
+                    with open(state_path, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        self._last_execution = data.get("last_execution", {})
+                        history_data = data.get("action_history", [])
+                        for record in history_data:
+                            self._action_history.append(
+                                ActionRecord(
+                                    action=record["action"],
+                                    timestamp=record["timestamp"],
+                                    context=record.get("context", {})
+                                )
+                            )
+                except Exception:
+                    pass
+
+    def _save_state(self):
+        state_path = "logs/control_plane/governance_state.json"
+        with self._lock:
+            try:
+                os.makedirs(os.path.dirname(state_path), exist_ok=True)
+                history_data = [
+                    {
+                        "action": record.action,
+                        "timestamp": record.timestamp,
+                        "context": record.context
+                    }
+                    for record in self._action_history
+                ]
+                with open(state_path, "w", encoding="utf-8") as f:
+                    json.dump({
+                        "last_execution": self._last_execution,
+                        "action_history": history_data
+                    }, f)
+            except Exception:
+                pass
+
     def evaluate_action(
         self,
         action: str,
@@ -124,8 +222,150 @@ class ActionGovernance:
             GovernanceDecision indicating allow/block
         """
         current_time = time.time()
-        self._record_action(action, current_time, context)
-        return GovernanceDecision(should_block=False)
+
+        # 1. Eligibility Check
+        eligibility_check = self._check_eligibility(action, context)
+        if eligibility_check.should_block:
+            return eligibility_check
+
+        # 2. Cooldown Check
+        cooldown_check = self._check_cooldown(action, current_time)
+        if cooldown_check.should_block:
+            return cooldown_check
+
+        # 3. Repetition Suppression Check
+        repetition_check = self._check_repetition(action, current_time)
+        if repetition_check.should_block:
+            return repetition_check
+
+        policy_def = self.get_config()
+        policy_hash = compute_policy_hash(policy_def)
+        policy_snapshot = PolicySnapshot(
+            policy_id=self.POLICY_ID,
+            policy_version=self.POLICY_VERSION,
+            policy_hash=policy_hash,
+        )
+
+        decision = self._policy_engine.admit(
+            PolicyAdmissionRequest(
+                action=action,
+                context={**context, "source": source or context.get("source", "legacy"), "env": self.env},
+                policy_version=self.POLICY_VERSION,
+                runtime_policy_version=self.POLICY_VERSION,
+                governance_contract=self.build_governance_contract(context=context),
+                decision_contract=validate_decision_contract({
+                    'decision_type': 'execution',
+                    'action': action,
+                    'parameters': {
+                        'app_name': context.get('app_name'),
+                        'source': source or 'legacy',
+                    },
+                    'version': self.POLICY_VERSION,
+                }),
+            )
+        )
+
+        if decision.allowed:
+            self._record_action(action, current_time, context)
+            return GovernanceDecision(
+                should_block=False,
+                policy_id=self.POLICY_ID,
+                policy_version=self.POLICY_VERSION,
+                policy_hash=policy_hash,
+                admission_state=decision.state.value,
+            )
+
+        return GovernanceDecision(
+            should_block=True,
+            reason=decision.reason,
+            details=decision.details,
+            policy_id=self.POLICY_ID,
+            policy_version=self.POLICY_VERSION,
+            policy_hash=policy_hash,
+            admission_state=decision.state.value,
+            rejection_code=decision.rejection_code.value if decision.rejection_code else None,
+        )
+
+    def evaluate_contract(
+        self,
+        decision: DecisionContract | dict,
+        context: Dict[str, Any],
+        source: Optional[str] = None,
+    ) -> GovernanceDecision:
+        if not isinstance(decision, DecisionContract):
+            decision = validate_decision_contract(decision)
+
+        current_time = time.time()
+
+        # 1. Eligibility Check
+        eligibility_check = self._check_eligibility(decision.action, context)
+        if eligibility_check.should_block:
+            return eligibility_check
+
+        # 2. Cooldown Check
+        cooldown_check = self._check_cooldown(decision.action, current_time)
+        if cooldown_check.should_block:
+            return cooldown_check
+
+        # 3. Repetition Suppression Check
+        repetition_check = self._check_repetition(decision.action, current_time)
+        if repetition_check.should_block:
+            return repetition_check
+
+        policy_hash = compute_policy_hash(self.get_config())
+        admission = self._policy_engine.admit(
+            PolicyAdmissionRequest(
+                action=decision.action,
+                context={
+                    **context,
+                    "decision_type": decision.decision_type,
+                    "decision_version": decision.version,
+                    "decision_parameters": decision.parameters,
+                    "source": source or context.get("source", "legacy"),
+                    "env": context.get("env", self.env),
+                },
+                policy_version=decision.version,
+                runtime_policy_version=self.POLICY_VERSION,
+                governance_contract=self.build_governance_contract(context=context),
+                decision_contract=decision,
+                execution_contract=context.get("execution_contract"),
+                policy_id=self.POLICY_ID,
+            )
+        )
+
+        if admission.allowed:
+            self._record_action(decision.action, time.time(), context)
+            return GovernanceDecision(
+                should_block=False,
+                policy_id=self.POLICY_ID,
+                policy_version=self.POLICY_VERSION,
+                policy_hash=policy_hash,
+                admission_state=admission.state.value,
+            )
+
+        return GovernanceDecision(
+            should_block=True,
+            reason=admission.reason,
+            details=admission.details,
+            policy_id=self.POLICY_ID,
+            policy_version=self.POLICY_VERSION,
+            policy_hash=policy_hash,
+            admission_state=admission.state.value,
+            rejection_code=admission.rejection_code.value if admission.rejection_code else None,
+        )
+
+    def build_governance_contract(
+        self,
+        context: Dict[str, Any],
+        governance_approver: str = "sarathi",
+    ):
+        return self._policy_engine.build_governance_contract(
+            governance_approver=governance_approver,
+            constraints=self.get_config(),
+        )
+
+    def get_policy_engine(self) -> DeterministicPolicyEngine:
+        return self._policy_engine
     
     def _check_eligibility(
         self,
@@ -147,6 +387,7 @@ class ActionGovernance:
             return GovernanceDecision(
                 should_block=True,
                 reason=GovernanceReason.ACTION_NOT_ELIGIBLE.value,
+                policy_id=self.POLICY_ID,
                 details={
                     'action': action,
                     'env': self.env,
@@ -183,6 +424,7 @@ class ActionGovernance:
                 return GovernanceDecision(
                     should_block=True,
                     reason=GovernanceReason.PREREQUISITE_NOT_MET.value,
+                    policy_id=self.POLICY_ID,
                     details={
                         'action': action,
                         'missing_prerequisite': 'app_name',
@@ -197,6 +439,7 @@ class ActionGovernance:
                 return GovernanceDecision(
                     should_block=True,
                     reason=GovernanceReason.PREREQUISITE_NOT_MET.value,
+                    policy_id=self.POLICY_ID,
                     details={
                         'action': action,
                         'missing_prerequisite': 'previous_version',
@@ -220,6 +463,7 @@ class ActionGovernance:
         Returns:
             GovernanceDecision
         """
+        self._load_state()
         cooldown_period = self.cooldown_periods.get(action, 0)
         
         if cooldown_period == 0:
@@ -234,6 +478,7 @@ class ActionGovernance:
                 return GovernanceDecision(
                     should_block=True,
                     reason=GovernanceReason.COOLDOWN_ACTIVE.value,
+                    policy_id=self.POLICY_ID,
                     details={
                         'action': action,
                         'last_execution': last_execution,
@@ -260,6 +505,7 @@ class ActionGovernance:
         Returns:
             GovernanceDecision
         """
+        self._load_state()
         # Get recent actions within the repetition window
         cutoff_time = current_time - self.repetition_window
         recent_actions = [
@@ -271,6 +517,7 @@ class ActionGovernance:
             return GovernanceDecision(
                 should_block=True,
                 reason=GovernanceReason.REPETITION_LIMIT_EXCEEDED.value,
+                policy_id=self.POLICY_ID,
                 details={
                     'action': action,
                     'action_history': [r.action for r in recent_actions],
@@ -306,6 +553,35 @@ class ActionGovernance:
             context=context
         )
         self._action_history.append(record)
+        
+        # Phase 3: Append to deterministic persistence journal
+        import uuid
+        execution_id = context.get('execution_id', str(uuid.uuid4()))
+        event_hash = hashlib.sha256(
+            f"{action}:{timestamp}:{str(context)}".encode()
+        ).hexdigest()
+        
+        try:
+            self._append_only_log.append(
+                execution_id=execution_id,
+                event_id=str(uuid.uuid4()),
+                state="ACTION_RECORDED",
+                timestamp=int(timestamp),
+                event_hash=event_hash,
+                previous_hash=self._append_only_log._execution_last_hashes.get(execution_id, ""),
+                source="action_governance",
+                details={
+                    'action': action,
+                    'context_keys': list(context.keys()),
+                    'app_name': context.get('app_name'),
+                    'env': context.get('env')
+                }
+            )
+        except Exception:
+            # Persistence errors should not block governance
+            pass
+        
+        self._save_state()
     
     def get_action_history(
         self,

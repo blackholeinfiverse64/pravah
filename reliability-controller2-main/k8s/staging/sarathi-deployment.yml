@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sarathi-staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sarathi
+      env: staging
+  template:
+    metadata:
+      labels:
+        app: sarathi
+        env: staging
+    spec:
+      containers:
+      - name: sarathi
+        image: rayyandevopss/sarathi-service:latest
+        imagePullPolicy: Always
+
+        ports:
+        - containerPort: 5001
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5001
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5001
+          initialDelaySeconds: 10
+          periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sarathi-staging-service
+spec:
+  selector:
+    app: sarathi
+    env: staging
+  ports:
+    - port: 5001
+      targetPort: 5001

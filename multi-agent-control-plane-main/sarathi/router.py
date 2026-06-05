@@ -1,6 +1,13 @@
-from .headers import SARATHI_HEADER, SARATHI_VALUE
+from security.internal_requests import build_signed_headers
 
-def attach_sarathi_header(headers: dict):
-    headers[SARATHI_HEADER] = SARATHI_VALUE
-    print(f"[X-CALLER={SARATHI_VALUE}] accepted")
+SERVICE_ID = "sarathi"
+
+
+def build_sarathi_headers(payload: dict):
+    headers = build_signed_headers(SERVICE_ID, payload)
+    print(f"[SERVICE_ID={SERVICE_ID}] signed request prepared")
     return headers
+
+
+def attach_sarathi_header(payload: dict):
+    return build_sarathi_headers(payload)

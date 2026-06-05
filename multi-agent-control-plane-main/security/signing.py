@@ -4,12 +4,24 @@ import hashlib
 import hmac
 import json
 import os
+import time
+
+MAX_TRACE_AGE_SECONDS = 300
+MAX_SERVICE_REQUEST_AGE_SECONDS = 300
 
 class PayloadSigner:
     """Signs and verifies payloads for SSPL Phase III compliance."""
     
     def __init__(self, secret_key: str = None):
-        self.secret_key = secret_key or os.getenv('SSPL_SECRET_KEY', 'default-secret-key-change-in-prod')
+        resolved_secret = secret_key or os.getenv('SSPL_SECRET_KEY')
+
+        if not resolved_secret:
+            environment = os.getenv('ENVIRONMENT', '').strip().lower()
+            if environment == 'prod':
+                raise ValueError('SSPL_SECRET_KEY must be set in production')
+            resolved_secret = 'default-secret-key-change-in-prod'
+
+        self.secret_key = resolved_secret
     
     def sign_payload(self, payload_dict: dict) -> dict:
         """Sign payload and return with signature field."""
@@ -73,3 +85,168 @@ def sign_payload(payload_dict: dict) -> dict:
 def verify_payload(payload_dict: dict, signature: str = None) -> bool:
     """Convenience function to verify payload."""
     return get_signer().verify_payload(payload_dict, signature)
+
+
+def generate_body_hash(payload_dict: dict) -> str:
+    canonical = json.dumps(
+        payload_dict,
+        sort_keys=True,
+        separators=(',', ':')
+    )
+
+    return hashlib.sha256(
+        canonical.encode()
+    ).hexdigest()
+
+
+def build_trace_payload(
+    trace_id: str,
+    timestamp: str,
+    body_hash: str
+) -> str:
+    return f"{trace_id}:{timestamp}:{body_hash}"
+
+
+def sign_trace(
+    trace_id: str,
+    timestamp: str,
+    payload_dict: dict
+) -> str:
+
+    signer = get_signer()
+
+    body_hash = generate_body_hash(payload_dict)
+
+    payload = build_trace_payload(
+        trace_id,
+        timestamp,
+        body_hash
+    )
+
+    return hmac.new(
+        signer.secret_key.encode(),
+        payload.encode(),
+        hashlib.sha256
+    ).hexdigest()
+
+
+def verify_trace_signature(
+    trace_id: str,
+    timestamp: str,
+    signature: str,
+    payload_dict: dict
+) -> bool:
+
+    if not trace_id:
+        return False
+
+    if not timestamp:
+        return False
+
+    if not signature:
+        return False
+
+    try:
+        request_time = int(timestamp)
+    except Exception:
+        return False
+
+    now = int(time.time())
+
+    if abs(now - request_time) > MAX_TRACE_AGE_SECONDS:
+        return False
+
+    expected_signature = sign_trace(
+        trace_id,
+        timestamp,
+        payload_dict
+    )
+
+    return hmac.compare_digest(
+        signature,
+        expected_signature
+    )
+
+
+def build_service_payload(
+    service_id: str,
+    timestamp: str,
+    nonce: str,
+    body_hash: str
+) -> str:
+    return (
+        f"{service_id}:"
+        f"{timestamp}:"
+        f"{nonce}:"
+        f"{body_hash}"
+    )
+
+
+def sign_service_request(
+    service_id: str,
+    timestamp: str,
+    nonce: str,
+    payload_dict: dict
+) -> str:
+
+    signer = get_signer()
+
+    body_hash = generate_body_hash(
+        payload_dict
+    )
+
+    payload = build_service_payload(
+        service_id,
+        timestamp,
+        nonce,
+        body_hash
+    )
+
+    return hmac.new(
+        signer.secret_key.encode(),
+        payload.encode(),
+        hashlib.sha256
+    ).hexdigest()
+
+
+def verify_service_request(
+    service_id: str,
+    timestamp: str,
+    nonce: str,
+    signature: str,
+    payload_dict: dict
+) -> bool:
+
+    if not service_id:
+        return False
+
+    if not timestamp:
+        return False
+
+    if not nonce:
+        return False
+
+    if not signature:
+        return False
+
+    try:
+        request_time = int(timestamp)
+    except Exception:
+        return False
+
+    now = int(time.time())
+
+    if abs(now - request_time) > MAX_SERVICE_REQUEST_AGE_SECONDS:
+        return False
+
+    expected_signature = sign_service_request(
+        service_id,
+        timestamp,
+        nonce,
+        payload_dict
+    )
+
+    return hmac.compare_digest(
+        signature,
+        expected_signature
+    )

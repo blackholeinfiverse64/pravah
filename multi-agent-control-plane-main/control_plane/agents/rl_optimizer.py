@@ -4,8 +4,8 @@ import numpy as np
 from collections import defaultdict
 import csv
 import datetime
-from core.stage_determinism import StageDeterminismLock, log_determinism_status
-from core.rl_decision_layer import RLDecisionLayer as OriginalRLDecisionLayer
+from control_plane.core.stage_determinism import StageDeterminismLock, log_determinism_status
+from control_plane.core.rl_decision_layer import RLDecisionLayer as OriginalRLDecisionLayer
 
 class RLDecisionLayer(OriginalRLDecisionLayer):
     """Ritesh's original RL Decision Layer with Q-learning."""
@@ -30,7 +30,7 @@ class RLOptimizer:
             epsilon = 0.2  # Exploration rate for dev/prod
         
         # Initialize Ritesh's RL Decision Layer via safe wiring
-        from core.rl_wiring import get_rl_wiring
+        from control_plane.core.rl_wiring import get_rl_wiring
         self.rl_wiring = get_rl_wiring(env)
         
         self._init_performance_log()

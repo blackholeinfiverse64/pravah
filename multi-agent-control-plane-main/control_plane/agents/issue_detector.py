@@ -13,7 +13,7 @@ class IssueDetector(BaseAgent):
         self.data_file = data_file
         self.env = env
         # Demo-safe Redis behavior - no silent mock mode
-        from core.redis_demo_behavior import get_redis_bus_demo_safe, RedisUnavailableError
+        from control_plane.core.redis_demo_behavior import get_redis_bus_demo_safe, RedisUnavailableError
         
         try:
             # Try Redis with explicit stub fallback for demo
@@ -40,7 +40,7 @@ class IssueDetector(BaseAgent):
     def _log_issue(self, state, reason):
         """Log detected issue and publish to bus."""
         # Guaranteed event emission - no silent failures
-        from core.guaranteed_events import emit_crash_event, emit_overload_event
+        from control_plane.core.guaranteed_events import emit_crash_event, emit_overload_event
         
         try:
             if state == "deployment_failure":
@@ -49,9 +49,9 @@ class IssueDetector(BaseAgent):
                 emit_overload_event(self.env, "detected", self.latency_threshold_ms, "system", load_level=self.latency_threshold_ms)
             else:
                 # Generic issue detection
-                from core.guaranteed_events import get_guaranteed_emitter
-                from core.redis_event_bus import get_redis_bus
-                from core.metrics_collector import get_metrics_collector
+                from control_plane.core.guaranteed_events import get_guaranteed_emitter
+                from control_plane.core.redis_event_bus import get_redis_bus
+                from control_plane.core.metrics_collector import get_metrics_collector
                 emitter = get_guaranteed_emitter(self.env, get_redis_bus(self.env), get_metrics_collector(self.env))
                 emitter.emit_runtime_event("issue", "detected", 0, failure_type=state, reason=reason)
         except Exception as e:

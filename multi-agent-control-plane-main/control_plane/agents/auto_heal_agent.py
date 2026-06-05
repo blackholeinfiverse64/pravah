@@ -4,10 +4,10 @@ import csv
 import datetime
 import shutil
 from utils import trigger_dashboard_deployment
-from core.base_agent import BaseAgent
-from core.redis_event_bus import get_redis_bus
-from core.prod_safety import validate_prod_action, ProductionSafetyError
-from core.stage_determinism import StageDeterminismLock, log_determinism_status
+from control_plane.core.base_agent import BaseAgent
+from control_plane.core.redis_event_bus import get_redis_bus
+from control_plane.core.prod_safety import validate_prod_action, ProductionSafetyError
+from control_plane.core.stage_determinism import StageDeterminismLock, log_determinism_status
 
 class AutoHealAgent(BaseAgent):
     """A simple agent that can execute healing strategies."""
@@ -15,7 +15,7 @@ class AutoHealAgent(BaseAgent):
         self.strategies = ['retry_deployment', 'restore_previous_version', 'adjust_thresholds']
         self.env = env
         # Demo-safe Redis behavior - no silent mock mode
-        from core.redis_demo_behavior import get_redis_bus_demo_safe, RedisUnavailableError
+        from control_plane.core.redis_demo_behavior import get_redis_bus_demo_safe, RedisUnavailableError
         
         try:
             # Try Redis with explicit stub fallback for demo
@@ -102,7 +102,7 @@ class AutoHealAgent(BaseAgent):
             heal_type = "heal_adjust"
         
         # Guaranteed event emission - no silent failures
-        from core.guaranteed_events import emit_deploy_event
+        from control_plane.core.guaranteed_events import emit_deploy_event
         try:
             emit_deploy_event(self.env, status, response_time, dataset_path, strategy)
         except Exception as e:

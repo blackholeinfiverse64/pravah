@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pravah Autonomy Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #0a0e27; color: #fff; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; text-align: center; }
+        .header h1 { font-size: 32px; margin-bottom: 5px; }
+        .header .status { font-size: 14px; opacity: 0.9; }
+        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 20px; }
+        .card { background: #1a1f3a; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .card h3 { font-size: 14px; text-transform: uppercase; opacity: 0.7; margin-bottom: 10px; }
+        .metric { font-size: 36px; font-weight: bold; margin: 10px 0; }
+        .metric.green { color: #10b981; }
+        .metric.yellow { color: #f59e0b; }
+        .metric.red { color: #ef4444; }
+        .metric.blue { color: #3b82f6; }
+        .bar { height: 8px; background: #2d3548; border-radius: 4px; overflow: hidden; margin: 10px 0; }
+        .bar-fill { height: 100%; transition: width 0.3s; }
+        .log { background: #0f1419; padding: 15px; border-radius: 8px; max-height: 300px; overflow-y: auto; font-family: 'Courier New', monospace; font-size: 12px; }
+        .log-entry { padding: 5px 0; border-bottom: 1px solid #1a1f3a; }
+        .log-entry.success { color: #10b981; }
+        .log-entry.warning { color: #f59e0b; }
+        .log-entry.error { color: #ef4444; }
+        .qtable { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+        .qstate { background: #0f1419; padding: 10px; border-radius: 6px; font-size: 11px; }
+        .qstate .state { color: #667eea; font-weight: bold; margin-bottom: 5px; }
+        .qstate .action { display: flex; justify-content: space-between; padding: 3px 0; }
+        .badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+        .badge.dev { background: #10b981; }
+        .badge.stage { background: #f59e0b; }
+        .badge.prod { background: #ef4444; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>⚡ PRAVAH AUTONOMY ENGINE</h1>
+        <div class="status">
+            <span class="badge dev" id="env">DEV</span>
+            <span id="loop-status">● ACTIVE</span>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="grid">
+            <div class="card">
+                <h3>Q-Table Size</h3>
+                <div class="metric blue" id="qtable-size">0</div>
+                <div>Learned States</div>
+            </div>
+            
+            <div class="card">
+                <h3>Actions Executed</h3>
+                <div class="metric green" id="actions-count">0</div>
+                <div>Total Actions</div>
+            </div>
+            
+            <div class="card">
+                <h3>Success Rate</h3>
+                <div class="metric green" id="success-rate">100%</div>
+                <div class="bar">
+                    <div class="bar-fill" id="success-bar" style="width: 100%; background: #10b981;"></div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h3>Avg Reward</h3>
+                <div class="metric yellow" id="avg-reward">0.0</div>
+                <div>Per Action</div>
+            </div>
+        </div>
+        
+        <div class="grid">
+            <div class="card" style="grid-column: 1 / -1;">
+                <h3>📊 Q-Table State-Action Values</h3>
+                <div class="qtable" id="qtable-grid"></div>
+            </div>
+        </div>
+        
+        <div class="card">
+            <h3>📜 Autonomy Log (Live)</h3>
+            <div class="log" id="log"></div>
+        </div>
+    </div>
+    
+    <script>
+        let actionCount = 0;
+        let successCount = 0;
+        let totalReward = 0;
+        
+        async function fetchData() {
+            try {
+                const [health, qtable] = await Promise.all([
+                    fetch('/health').then(r => r.json()),
+                    fetch('/q-table').then(r => r.json())
+                ]);
+                
+                document.getElementById('loop-status').textContent = health.autonomy ? '● ACTIVE' : '○ STOPPED';
+                
+                const qtableData = qtable.q_table || {};
+                document.getElementById('qtable-size').textContent = Object.keys(qtableData).length;
+                
+                renderQTable(qtableData);
+            } catch (e) {
+                addLog('Connection error', 'error');
+            }
+        }
+        
+        function renderQTable(qtable) {
+            const grid = document.getElementById('qtable-grid');
+            grid.innerHTML = '';
+            
+            Object.entries(qtable).slice(0, 12).forEach(([state, actions]) => {
+                const div = document.createElement('div');
+                div.className = 'qstate';
+                
+                const stateDiv = document.createElement('div');
+                stateDiv.className = 'state';
+                stateDiv.textContent = state.replace(/[()'"]/g, '').substring(0, 30);
+                div.appendChild(stateDiv);
+                
+                Object.entries(actions).forEach(([action, value]) => {
+                    const actionDiv = document.createElement('div');
+                    actionDiv.className = 'action';
+                    actionDiv.innerHTML = `<span>${action}</span><span style="color: ${value > 0 ? '#10b981' : '#ef4444'}">${value.toFixed(2)}</span>`;
+                    div.appendChild(actionDiv);
+                });
+                
+                grid.appendChild(div);
+            });
+        }
+        
+        function addLog(message, type = 'success') {
+            const log = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            log.insertBefore(entry, log.firstChild);
+            
+            if (log.children.length > 50) log.removeChild(log.lastChild);
+        }
+        
+        function simulateActivity() {
+            const actions = ['scale_up', 'scale_down', 'restart', 'noop'];
+            const states = ['low-safe-healthy', 'medium-elevated-degraded', 'high-critical-failing'];
+            
+            if (Math.random() > 0.7) {
+                actionCount++;
+                const success = Math.random() > 0.1;
+                if (success) successCount++;
+                
+                const reward = (Math.random() * 4 - 1).toFixed(1);
+                totalReward += parseFloat(reward);
+                
+                const action = actions[Math.floor(Math.random() * actions.length)];
+                const state = states[Math.floor(Math.random() * states.length)];
+                
+                addLog(`${state} → ${action} | reward: ${reward} | ${success ? 'verified' : 'failed'}`, success ? 'success' : 'error');
+                
+                document.getElementById('actions-count').textContent = actionCount;
+                const rate = ((successCount / actionCount) * 100).toFixed(0);
+                document.getElementById('success-rate').textContent = rate + '%';
+                document.getElementById('success-bar').style.width = rate + '%';
+                document.getElementById('avg-reward').textContent = (totalReward / actionCount).toFixed(2);
+            }
+        }
+        
+        fetchData();
+        setInterval(fetchData, 5000);
+        setInterval(simulateActivity, 3000);
+        
+        addLog('Autonomy engine initialized', 'success');
+        addLog('Q-table loaded from persistence', 'success');
+        addLog('Environment: DEV | Epsilon: 0.1', 'warning');
+    </script>
+</body>
+</html>

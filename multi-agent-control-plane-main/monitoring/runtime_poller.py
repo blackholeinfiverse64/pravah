@@ -20,8 +20,8 @@ from urllib.parse import urljoin
 
 import requests
 
-from app.app_registry import load_apps
-from core.env_config import EnvironmentConfig
+from control_plane.backend.app.app_registry import load_apps
+from control_plane.core.env_config import EnvironmentConfig
 
 class RuntimePoller:
     """Poll runtime health endpoints and emit deterministic status signals."""

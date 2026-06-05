@@ -61,6 +61,7 @@ class DecisionResponse(BaseModel):
     reason: str
     confidence: float = Field(ge=0.0, le=1.0)
     timestamp: datetime
+    version: str
 
 
 class RecentActivityResponse(BaseModel):

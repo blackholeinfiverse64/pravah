@@ -9,8 +9,8 @@ import json
 import datetime
 import csv
 import os
-from core.redis_event_bus import get_redis_bus
-from core.env_config import EnvironmentConfig
+from control_plane.core.redis_event_bus import get_redis_bus
+from control_plane.core.env_config import EnvironmentConfig
 
 class QueueMonitor:
     """Monitor and debug Redis event bus."""
@@ -104,18 +104,24 @@ class QueueMonitor:
     
     def run_continuous_monitoring(self, interval=30, cycles=1):
         """Run bounded monitoring with periodic stats."""
-        if cycles <= 0:
-            raise ValueError("cycles must be >= 1 in loopless mode")
+        if cycles < 0:
+            raise ValueError("cycles must be >= 0")
 
         print(f"🚀 Starting bounded queue monitoring (interval: {interval}s, cycles: {cycles})")
         print(f"📝 Logging to: {self.log_file}")
         
         try:
-            for idx in range(cycles):
-                self.print_stats()
-                if idx < cycles - 1:
+            if cycles == 0:
+                while True:
+                    self.print_stats()
                     print(f"⏰ Next update in {interval} seconds...")
                     time.sleep(interval)
+            else:
+                for idx in range(cycles):
+                    self.print_stats()
+                    if idx < cycles - 1:
+                        print(f"⏰ Next update in {interval} seconds...")
+                        time.sleep(interval)
                 
         except KeyboardInterrupt:
             print("\n🛑 Monitoring stopped by user")

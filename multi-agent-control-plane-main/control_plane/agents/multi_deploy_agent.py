@@ -250,7 +250,7 @@ if __name__ == "__main__":
     parser.add_argument("--env", choices=['dev', 'stage', 'prod'], default='dev')
     parser.add_argument("--workers", type=int, default=3, help='Number of worker agents')
     parser.add_argument("--test", action='store_true', help='Run test workload')
-    parser.add_argument("--status-cycles", type=int, default=1, help='Number of status snapshots')
+    parser.add_argument("--status-cycles", type=int, default=0, help='Number of status snapshots; 0 means run continuously')
     
     args = parser.parse_args()
     
@@ -272,13 +272,20 @@ if __name__ == "__main__":
     
     try:
         print("Multi-Deploy Agent running in bounded status mode.")
-        if args.status_cycles <= 0:
-            raise ValueError("--status-cycles must be >= 1 in loopless mode")
-        for _ in range(args.status_cycles):
-            status = multi_agent.get_status()
-            print(f"Status: {status['active_workers']}/{status['workers']} workers, "
-                  f"queue: {status['queue_size']}")
-            time.sleep(10)
+        if args.status_cycles < 0:
+            raise ValueError("--status-cycles must be >= 0")
+        if args.status_cycles == 0:
+            while True:
+                status = multi_agent.get_status()
+                print(f"Status: {status['active_workers']}/{status['workers']} workers, "
+                      f"queue: {status['queue_size']}")
+                time.sleep(10)
+        else:
+            for _ in range(args.status_cycles):
+                status = multi_agent.get_status()
+                print(f"Status: {status['active_workers']}/{status['workers']} workers, "
+                      f"queue: {status['queue_size']}")
+                time.sleep(10)
     except KeyboardInterrupt:
         print("\nStopping Multi-Deploy Agent...")
         multi_agent.stop_workers()

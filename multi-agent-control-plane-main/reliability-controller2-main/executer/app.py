@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 import subprocess
 import os
 
+from core_hooks.service_auth import ServiceAuthError, verify_service_auth
+
 app = Flask(__name__)
 
 # ---------------- CONFIG ----------------
@@ -119,6 +121,14 @@ def execute_real_action(service_id, action):
 @app.route("/execute-action", methods=["POST"])
 def execute_action():
     data = request.get_json()
+    try:
+        data = verify_service_auth(data)
+    except ServiceAuthError as exc:
+        return jsonify({
+            "status": "failed",
+            "reason": str(exc),
+            "verified": False,
+        }), 401
 
     service_id = data.get("service_id")
     action = data.get("action")

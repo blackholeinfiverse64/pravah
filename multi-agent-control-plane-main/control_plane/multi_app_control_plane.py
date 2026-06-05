@@ -8,7 +8,7 @@ from control_plane.app_override_manager import AppOverrideManager
 from core_hooks.signal_builder import build_base_signal
 import pathlib
 from executer.runner import execute
-from sarathi.headers import SARATHI_HEADER, SARATHI_VALUE
+from sarathi.router import build_sarathi_headers
 
 class MultiAppControlPlane:
     """Aggregates registry, health overview, and decision history across apps."""
@@ -61,8 +61,8 @@ class MultiAppControlPlane:
                 # Build signal using the event's trace id (ensures propagation)
                 signal = build_base_signal(trace_id=event["trace_id"], service_id=app_name, action=action)
 
-                # Prefer direct execution via executer with sarathi caller headers
-                headers = {SARATHI_HEADER: SARATHI_VALUE}
+                # Prefer direct execution via executer with signed Sarathi service headers
+                headers = build_sarathi_headers(signal)
                 try:
                     execution_result = execute(signal, headers)
                 except Exception:

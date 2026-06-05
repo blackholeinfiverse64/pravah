@@ -39,7 +39,7 @@ def list_apps():
     """
     Return all registered services.
     """
-    from app.app_registry import load_apps
+    from .app_registry import load_apps
 
     apps = load_apps()
 
@@ -55,7 +55,7 @@ def get_orchestration_metrics():
     Return latest decision metrics.
     """
     if not DECISION_LOG.exists():
-        return {"decisions": []}
+        return {"total_decisions": 0, "recent": [], "decisions": []}
 
     decisions = []
 

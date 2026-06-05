@@ -72,10 +72,10 @@ services:
       - ./insightflow:/app/insightflow
       - ./apps:/app/apps
       - ./orchestrator:/app/orchestrator
-    command: python main.py --dataset dataset/student_scores.csv --planner rl
+    command: python -m control_plane.backend.app.main
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "python", "-c", "import os; exit(0 if os.path.exists('logs/deployment_log.csv') else 1)" ]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -98,7 +98,7 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./dataset:/app/dataset
-    command: python agents/multi_deploy_agent.py --env dev --workers 1
+    command: python -m control_plane.agents.multi_deploy_agent --env dev --workers 1
     restart: unless-stopped
     depends_on:
       - redis
@@ -116,7 +116,7 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./dataset:/app/dataset
-    command: python agents/multi_deploy_agent.py --env dev --workers 1
+    command: python -m control_plane.agents.multi_deploy_agent --env dev --workers 1
     restart: unless-stopped
     depends_on:
       - redis
@@ -134,7 +134,7 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./dataset:/app/dataset
-    command: python agents/multi_deploy_agent.py --env dev --workers 1
+    command: python -m control_plane.agents.multi_deploy_agent --env dev --workers 1
     restart: unless-stopped
     depends_on:
       - redis
@@ -170,7 +170,7 @@ services:
       - PYTHONUNBUFFERED=1
     volumes:
       - ./logs:/app/logs
-    command: python monitoring/queue_monitor.py --continuous
+    command: python -m monitoring.queue_monitor --continuous --cycles 0
     restart: unless-stopped
     depends_on:
       redis:
@@ -186,7 +186,7 @@ services:
       - PYTHONUNBUFFERED=1
     volumes:
       - ./logs:/app/logs
-    command: python monitoring/infra_health_monitor.py --env dev
+    command: python -m monitoring.infra_health_monitor --env dev --continuous
     restart: unless-stopped
     depends_on:
       - agents

@@ -55,4 +55,5 @@ class DecisionEngine:
             reason=reason,
             confidence=confidence,
             timestamp=datetime.now(timezone.utc),
+            version="v1",
         )

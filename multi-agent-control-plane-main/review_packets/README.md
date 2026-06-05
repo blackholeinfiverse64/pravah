@@ -1,5 +1,7 @@
 # Full System Demo
 
+Phase 1 trace-sovereignty proof packet: [review_packets/final_convergence.md](review_packets/final_convergence.md)
+
 ## Run the demo
 
 Windows PowerShell:

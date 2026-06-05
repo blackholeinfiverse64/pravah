@@ -1,138 +1,172 @@
-from flask import Flask, jsonify
-import requests
-import time
-import json
-import logging
-import psutil
-import os
+from flask import Flask, request, jsonify, Response
+import time, json, threading, hashlib
+from collections import deque
+from datetime import datetime
 
 app = Flask(__name__)
 
-ENV = os.getenv("ENV", "DEV")
+MAX_EVENTS = 1000
+user_events = deque(maxlen=MAX_EVENTS)
+signal_queue = deque(maxlen=MAX_EVENTS)   # each item = one flat signal dict
+lock = threading.Lock()
 
-services = {
-    "web1": "http://web1-service:5001/health",
-    "web2": "http://web2-service:5002/health",
-    "executer": "http://executer-service:5003/health"
+def now_iso():
+    return datetime.utcnow().isoformat() + "Z"
+
+def trace_hash(trace_id):
+    return hashlib.sha256(trace_id.encode()).hexdigest()
+
+
+# =============================================================
+# INGEST — /track-event
+# Receives raw events from Web, Sarathi, Executer layers.
+# Converts each event into ONE flat, independent signal.
+# No interpretation. No grouping. No inference.
+# =============================================================
+
+EVENT_TO_SIGNAL = {
+    "session_start":     ("login_detected",      "status", "RUNNING"),
+    "user_login":        ("login_detected",      "status", "RUNNING"),
+    "page_view":         ("user_interaction",    "status", "RUNNING"),
+    "interaction_click": ("user_interaction",    "status", "RUNNING"),
+    "decision_made":     ("decision",            "status", "RUNNING"),
+    "enforcement_done":  ("enforcement",         "status", "RUNNING"),
+    "execution_started": ("execution",           "status", "RUNNING"),
+    "verification_done": ("verification",        "status", "SUCCESS"),
+    "execution_done":    ("execution_completed", "status", "SUCCESS"),
+    "session_end":       ("session_end",         "status", "RUNNING"),
 }
 
-# ---------------- LOGGING ----------------
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+def severity_for(metric, value):
+    if value == "FAILURE":
+        return "CRITICAL"
+    if value == "SUCCESS":
+        return "INFO"
+    return "INFO"
 
-if not logger.handlers:
-    fh = logging.FileHandler("monitor.log")
-    ch = logging.StreamHandler()
+def build_flat_signal(event):
+    """
+    Convert a raw event dict into one flat signal dict.
+    No interpretation — only maps observed event fields to signal fields.
+    """
+    trace_id   = event.get("trace_id")
+    event_type = event.get("event_type", "unknown")
 
-    formatter = logging.Formatter('%(message)s')
-    fh.setFormatter(formatter)
-    ch.setFormatter(formatter)
+    signal_type, metric, default_value = EVENT_TO_SIGNAL.get(
+        event_type, (event_type, "status", "RUNNING")
+    )
 
-    logger.addHandler(fh)
-    logger.addHandler(ch)
+    value = default_value
 
+    # execution_done carries explicit status — use it directly
+    if event_type == "execution_done":
+        raw_status = event.get("status", "")
+        value = "SUCCESS" if raw_status == "success" else "FAILURE"
+        signal_type = "execution_completed" if value == "SUCCESS" else "execution_failed"
 
-# ---------------- METRICS ----------------
-@app.route("/metrics")
-def metrics():
-    results = []
+    # verification carries explicit result
+    if event_type == "verification_done":
+        value = event.get("result", "SUCCESS")
 
-    system_cpu = psutil.cpu_percent(interval=1) / 100
-    system_memory = psutil.virtual_memory().percent / 100
+    service = (
+        event.get("service")
+        or event.get("metadata", {}).get("source")
+        or "system"
+    )
 
-    for service_id in sorted(services.keys()):
-        url = services[service_id]
+    severity = severity_for(metric, value)
 
-        status = "healthy"
-        error_rate = 0.0
-        issue_detected = False
-        issue_type = "none"
-        recommended_action = "noop"
-
-        try:
-            start = time.time()
-            response = requests.get(url, timeout=3)
-            latency = int((time.time() - start) * 1000)
-
-            if response.status_code != 200:
-                status = "critical"
-                error_rate = 1.0
-                issue_detected = True
-                issue_type = "crash"
-                recommended_action = "restart"
-
-            elif latency > 500:
-                status = "degraded"
-                issue_detected = True
-                issue_type = "cpu_spike"
-                recommended_action = "scale_up"
-
-        except:
-            status = "critical"
-            error_rate = 1.0
-            issue_detected = True
-            issue_type = "crash"
-            recommended_action = "restart"
-
-        timestamp = time.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        output = {
-            "service_id": service_id,
-            "timestamp": timestamp,
-            "status": status,
-            "metrics": {
-                "cpu": round(system_cpu, 2),
-                "memory": round(system_memory, 2),
-                "error_rate": error_rate,
-                "uptime": int(time.time())
-            },
-            "issue_detected": issue_detected,
-            "issue_type": issue_type,
-            "recommended_action": recommended_action
-        }
-
-        logging.info(json.dumps({
-            "timestamp": timestamp,
-            "event": "DETECTION",
-            "service_id": service_id,
-            "metrics": output["metrics"],
-            "status": status,
-            "issue_type": issue_type,
-            "action": recommended_action
-        }))
-
-        results.append(output)
-
-    return jsonify(results)
-
-
-# ---------------- RUNTIME PAYLOAD ----------------
-@app.route("/internal/runtime-payload")
-def runtime_payload():
-    cpu = psutil.cpu_percent(interval=1) / 100
-    memory = psutil.virtual_memory().percent / 100
-
-    status = "healthy"
-    if cpu > 0.85 or memory > 0.85:
-        status = "degraded"
-
-    payload = {
-        "app_id": "monitor-service",
-        "cpu_usage": round(cpu, 2),
-        "memory_usage": round(memory, 2),
-        "error_rate": 0.0,
-        "health_score": 1.0 if status == "healthy" else 0.5,
-        "environment": ENV.lower()
+    signal = {
+        "signal_type":  signal_type,
+        "service":      service,
+        "metric":       metric,
+        "value":        value,
+        "severity":     severity,
+        "timestamp":    event.get("timestamp", int(time.time())),
+        "trace_id":     trace_id,
+        "trace_origin": "core",
+        "trace_hash":   trace_hash(trace_id) if trace_id else None,
+        "source":       "core",
     }
 
-    return jsonify(payload)
+    # execution_id — attach if present
+    if event.get("execution_id"):
+        signal["execution_id"] = event["execution_id"]
+
+    # Sarathi decision fields — flat, no nesting
+    if event_type == "decision_made":
+        meta = event.get("metadata", {})
+        signal["decision"]         = meta.get("decision")
+        signal["policy_reference"] = meta.get("policy_reference", "score_threshold_0.6")
+        signal["action"]           = meta.get("action")
+
+    # enforcement fields — flat
+    if event_type == "enforcement_done":
+        signal["enforcement_status"] = event.get("enforcement_status", "validated")
+
+    # verification fields — flat
+    if event_type == "verification_done":
+        signal["result"]       = event.get("result", "SUCCESS")
+        signal["execution_id"] = event.get("execution_id")
+
+    return signal
 
 
-# ---------------- HEALTH ----------------
+@app.route("/track-event", methods=["POST"])
+def track_event():
+    data = request.get_json(force=True)
+
+    required = ["user_id", "event_type", "timestamp", "session_id", "trace_id"]
+    if not all(data.get(k) for k in required):
+        return jsonify({"error": "invalid event"}), 400
+
+    signal = build_flat_signal(data)
+
+    with lock:
+        user_events.append(data)
+        signal_queue.append(signal)
+
+    return jsonify({"status": "ok"})
+
+
+# =============================================================
+# STREAM — /signals/stream
+# Emits ONE signal per SSE event.
+# Each signal is flat, independent, non-interpretive.
+# No blobs. No correlation objects. No causal_chain.
+# =============================================================
+
+def stream_generator():
+    while True:
+        try:
+            with lock:
+                signal = signal_queue.popleft() if signal_queue else None
+
+            if signal:
+                payload = {**signal, "emitted_at": now_iso()}
+                yield f"data: {json.dumps(payload)}\n\n"
+            else:
+                yield ": keepalive\n\n"
+
+        except Exception as e:
+            print("[STREAM ERROR]", e)
+            yield ": error\n\n"
+
+        time.sleep(0.2)
+
+
+@app.route("/signals/stream")
+def stream():
+    return Response(
+        stream_generator(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+    )
+
+
 @app.route("/health")
 def health():
-    return jsonify({"status": "healthy"})
+    return {"status": "ok"}
 
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5004)
+app.run(host="0.0.0.0", port=5004)

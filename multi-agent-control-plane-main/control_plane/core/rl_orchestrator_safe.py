@@ -8,6 +8,14 @@ import json
 import os
 from typing import Dict, Any, List, Optional
 
+from contracts.decision_contract import DecisionContract, validate_decision_contract
+from contracts.execution_contract import (
+    advance_execution_state,
+    build_execution_contract,
+    validate_execution_contract,
+)
+from contracts.runtime_attestation import compute_runtime_attestation
+
 def get_safe_executor(env='dev'):
     """Get safe executor instance"""
     return SafeOrchestrator(env)
@@ -219,6 +227,11 @@ class SafeOrchestrator:
         """
         from control_plane.core.proof_logger import write_proof, ProofEvents
         timestamp = datetime.datetime.now().isoformat()
+        execution_contract_data = context.get('execution_contract')
+        execution_contract = None
+
+        if execution_contract_data:
+            execution_contract = validate_execution_contract(execution_contract_data, context)
 
         emergency_freeze_enabled = str(os.getenv('EMERGENCY_FREEZE_ENABLED', 'false')).lower() == 'true'
         emergency_freeze_reason = os.getenv('EMERGENCY_FREEZE_REASON', '').strip() or 'manual_override'
@@ -255,6 +268,138 @@ class SafeOrchestrator:
             })
             self._log_decision(action, result, context, source)
             return result
+
+        decision = validate_decision_contract({
+            'decision_type': 'execution',
+            'action': action,
+            'parameters': {
+                'app_name': app_name,
+                'source': source or 'legacy',
+            },
+            'version': 'v1',
+        })
+        return self.execute_decision_contract(decision, context, source=source)
+
+    def execute_decision_contract(
+        self,
+        decision: DecisionContract | dict,
+        context: Dict[str, Any],
+        source: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        from control_plane.core.proof_logger import write_proof, ProofEvents
+        from control_plane.core.action_governance import ActionGovernance
+
+        try:
+            if not isinstance(decision, DecisionContract):
+                decision = validate_decision_contract(decision)
+        except Exception as exc:
+            return self._build_refusal_result(
+                action_requested=str(getattr(decision, 'action', 'invalid')),
+                reason=str(exc),
+                reason_code='invalid_decision_contract',
+                source=source,
+                extra={'decision_validation_error': str(exc)},
+            )
+
+        contract_context = {
+            **context,
+            "decision_type": decision.decision_type,
+            "decision_version": decision.version,
+            "decision_parameters": decision.parameters,
+        }
+
+        governance = ActionGovernance(env=self.env)
+        governance_decision = governance.evaluate_contract(
+            decision=decision,
+            context=contract_context,
+            source=source,
+        )
+
+        if governance_decision.should_block:
+            return self._build_refusal_result(
+                action_requested=decision.action,
+                reason=governance_decision.details.get('message', governance_decision.reason),
+                reason_code=governance_decision.reason,
+                source=source,
+                extra={
+                    'governance_blocked': True,
+                    'governance_reason': governance_decision.reason,
+                    'details': governance_decision.details,
+                },
+            )
+
+        trusted_signers = governance.get_policy_engine().trusted_signers
+        approved_by = contract_context.get('approved_by') or (
+            source if source in trusted_signers else 'sarathi'
+        )
+        # Attach governance policy snapshot (if present) so executions are attestable
+        policy_snapshot = None
+        try:
+            policy_snapshot = {
+                'policy_id': getattr(governance_decision, 'policy_id', None),
+                'policy_version': getattr(governance_decision, 'policy_version', None),
+                'policy_hash': getattr(governance_decision, 'policy_hash', None),
+            }
+        except Exception:
+            policy_snapshot = None
+
+        # Compute a deterministic runtime attestation (software-rooted)
+        try:
+            runtime_attestation = compute_runtime_attestation(manifest=None, environment=None)
+        except Exception:
+            runtime_attestation = None
+
+        execution_contract = build_execution_contract(
+            decision_contract=decision,
+            execution_payload=contract_context,
+            approved_by=approved_by,
+            policy_snapshot=policy_snapshot,
+            runtime_attestation=runtime_attestation.model_dump() if runtime_attestation is not None else None,
+        )
+
+        try:
+            from control_plane.security.deterministic_policy_engine import PolicyAdmissionRequest
+
+            policy_engine = governance.get_policy_engine()
+            governance_contract = governance.build_governance_contract(context=contract_context, governance_approver=approved_by)
+            policy_engine.enforce(
+                PolicyAdmissionRequest(
+                    action=decision.action,
+                    context={
+                        **contract_context,
+                        "env": self.env,
+                        "execution_payload": execution_contract.execution_payload,
+                    },
+                    policy_version=decision.version,
+                    runtime_policy_version=governance.POLICY_VERSION,
+                    governance_contract=governance_contract,
+                    decision_contract=decision,
+                    execution_contract=execution_contract,
+                    policy_id=governance.POLICY_ID,
+                )
+            )
+        except Exception as exc:
+            return self._build_refusal_result(
+                action_requested=decision.action,
+                reason=str(exc),
+                reason_code='deterministic_policy_rejection',
+                source=source,
+                extra={
+                    'policy_enforcement_error': str(exc),
+                },
+            )
+
+        contract_context = {
+            **contract_context,
+            'execution_id': execution_contract.execution_id,
+            'execution_contract': execution_contract.model_dump(mode='json'),
+        }
+
+        action = decision.action
+        context = contract_context
+        timestamp = datetime.datetime.now().isoformat()
+        emergency_freeze_enabled = str(os.getenv('EMERGENCY_FREEZE_ENABLED', 'false')).lower() == 'true'
+        emergency_freeze_reason = os.getenv('EMERGENCY_FREEZE_REASON', '').strip() or 'manual_override'
 
         if emergency_freeze_enabled and action != 'noop':
             result = self._build_refusal_result(
@@ -415,6 +560,23 @@ class SafeOrchestrator:
                 'safety_override': False,
                 'source': source
             })
+
+            if execution_contract:
+                execution_contract = advance_execution_state(execution_contract, 'EXECUTED')
+                execution_contract = advance_execution_state(
+                    execution_contract,
+                    'COMPLETED' if result.get('success', True) else 'FAILED',
+                )
+                result.update({
+                    'execution_id': execution_contract.execution_id,
+                    'execution_hash': execution_contract.execution_hash,
+                    'approved_at': execution_contract.approved_at,
+                    'approved_by': execution_contract.approved_by,
+                    'immutable': execution_contract.immutable,
+                    'execution_state': execution_contract.execution_state,
+                    'execution_state_history': list(execution_contract.execution_state_history),
+                    'execution_contract': execution_contract.model_dump(mode='json'),
+                })
             
             write_proof(ProofEvents.ORCH_EXEC, {
                 'env': self.env,

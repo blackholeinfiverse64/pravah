@@ -10,6 +10,7 @@ from datetime import datetime
 from control_plane.core.env_config import EnvironmentConfig
 from control_plane.core.rl_remote_client import RLRemoteClient
 from control_plane.core.state_adapter import StateAdapter
+from contracts.decision_contract import validate_decision_contract
 
 class RuntimeRLPipe:
     """Direct pipe from runtime events to the remote RL Decision Brain."""
@@ -31,7 +32,7 @@ class RuntimeRLPipe:
         Used by the Arbitrator.
         """
         # Strict validation (same as pipe)
-        from core.runtime_event_validator import validate_and_log_payload
+        from control_plane.core.runtime_event_validator import validate_and_log_payload
         is_valid, validated_payload, error_msg = validate_and_log_payload(event_data, "RL_INPUT_QUERY")
         
         if not is_valid:
@@ -57,10 +58,27 @@ class RuntimeRLPipe:
         decision_response = self.rl_brain.decide(rl_request)
         action_str = decision_response.get("action", "noop")
         source = decision_response.get("source", "rl_brain")
+
+        try:
+            decision_contract = validate_decision_contract({
+                "decision_type": "execution",
+                "action": action_str,
+                "parameters": {
+                    "service_id": validated_payload.get("app", "unknown-service"),
+                },
+                "version": decision_response["version"],
+            })
+        except Exception as exc:
+            return {
+                'rl_action': 0,
+                'execution': {'status': 'refused'},
+                'validation_error': str(exc),
+                'brain_metadata': decision_response,
+            }
         
         # PROOF: Explicitly log if we hit a fallback (No Silent Failures)
         if source == "remote_client_fallback":
-            from core.proof_logger import write_proof, ProofEvents
+            from control_plane.core.proof_logger import write_proof, ProofEvents
             write_proof(ProofEvents.RL_DECISION, {
                 "env": self.env,
                 "status": "failed",
@@ -82,8 +100,8 @@ class RuntimeRLPipe:
         """Pipe runtime event to RL Brain with structured proof logging and validation."""
         
         # Strict validation BEFORE calling RL
-        from core.runtime_event_validator import validate_and_log_payload
-        from core.proof_logger import write_proof, ProofEvents
+        from control_plane.core.runtime_event_validator import validate_and_log_payload
+        from control_plane.core.proof_logger import write_proof, ProofEvents
         
         is_valid, validated_payload, error_msg = validate_and_log_payload(event_data, "RL_INPUT")
         
@@ -105,7 +123,7 @@ class RuntimeRLPipe:
         })
         
         # Log payload before RL (unchanged pass-through)
-        from core.runtime_event_validator import RuntimeEventValidator
+        from control_plane.core.runtime_event_validator import RuntimeEventValidator
         RuntimeEventValidator.log_payload_integrity(validated_payload, "RL_CONSUME")
         
         # Adapt State
@@ -117,8 +135,25 @@ class RuntimeRLPipe:
 
         # Get RL decision
         decision_response = self.rl_brain.decide(rl_request)
+        action_str = decision_response.get("action", "noop")
 
-        
+        try:
+            decision_contract = validate_decision_contract({
+                "decision_type": "execution",
+                "action": action_str,
+                "parameters": {
+                    "service_id": validated_payload.get("app", "unknown-service"),
+                },
+                "version": decision_response["version"],
+            })
+        except Exception as exc:
+            return {
+                'rl_action': 0,
+                'execution': {'status': 'refused'},
+                'validation_error': str(exc),
+                'brain_metadata': decision_response,
+            }
+
         # Map action string to integer for compatibility with existing orchestrator logic
         # 0: noop, 1: restart, 2: scale_up, 3: scale_down, 4: rollback
         action_map = {
@@ -128,8 +163,7 @@ class RuntimeRLPipe:
             "scale_down": 3,
             "rollback": 4
         }
-        action_str = decision_response.get("action", "noop")
-        rl_action_int = action_map.get(action_str, 0)
+        rl_action_int = action_map.get(decision_contract.action, 0)
 
         # Structured proof logging - RL_DECISION
         write_proof(ProofEvents.RL_DECISION, {
@@ -139,20 +173,26 @@ class RuntimeRLPipe:
             'decision': rl_action_int,
             'decision_str': action_str,
             'brain_response': decision_response,
+            'decision_contract': decision_contract.model_dump(),
             'status': 'decided'
         })
         
         # Safe execution validation
-        from core.rl_orchestrator_safe import get_safe_executor
+        from control_plane.core.rl_orchestrator_safe import get_safe_executor
         safe_executor = get_safe_executor(self.env)
         
         # Validate and execute (or refuse)
         # We pass the integer action as expected by validate_and_execute
-        execution_result = safe_executor.validate_and_execute(rl_action_int, validated_payload)
+        execution_result = safe_executor.execute_decision_contract(
+            decision_contract,
+            validated_payload,
+            source='rl_decision_layer'
+        )
         
         return {
             'rl_action': rl_action_int,
             'action_str': action_str,
+            'decision_contract': decision_contract.model_dump(),
             'execution': execution_result,
             'brain_metadata': decision_response
         }

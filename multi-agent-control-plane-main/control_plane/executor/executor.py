@@ -1,9 +1,16 @@
+# =====================================================================
+# ⚠️ LEGACY EXECUTION PATH
+# DEPRECATED: DO NOT USE FOR ACTIVE RUNTIME INGESTION/EXECUTION LIFE-CYCLES
+# SCHEDULED FOR REMOVAL IN PHASE 7.
+# =====================================================================
+
 import uuid
 import subprocess
 import json
 from control_plane.core.trace_logger import log_event
 import threading
 import time
+from contracts.execution_contract import validate_execution_contract, advance_execution_state
 
 LOCK = threading.Lock()
 # -------------------------
@@ -31,7 +38,16 @@ def cleanup_all_expired(now=None):
 # -------------------------
 
 def execute(payload):
-    execution_id = payload.get("execution_id") or str(uuid.uuid4())
+    execution_contract_data = payload.get("execution_contract")
+    execution_contract = None
+    if execution_contract_data:
+        execution_contract = validate_execution_contract(execution_contract_data, payload)
+
+    execution_id = (
+        payload.get("execution_id")
+        or (execution_contract.execution_id if execution_contract else None)
+        or str(uuid.uuid4())
+    )
 
     trace_id = payload.get("trace_id")
     service_id = payload.get("service_id")
@@ -106,6 +122,7 @@ def execute(payload):
         verified = verify_execution(service_id, action)
 
         status = "success" if verified else "failed"
+        execution_state = "COMPLETED" if verified else "FAILED"
         with LOCK:
             EXECUTION_LOCKS[lock_key]["status"] = status
             EXECUTION_LOCKS[lock_key]["timestamp"] = time.time()
@@ -138,6 +155,11 @@ def execute(payload):
             "execution_id": execution_id,
             "status": status,
             "verified": verified,
+            "execution_state": execution_state,
+            "execution_contract": (
+                advance_execution_state(execution_contract, execution_state).model_dump(mode="json")
+                if execution_contract else None
+            ),
             "trace_id": trace_id
         }
 
@@ -182,6 +204,11 @@ def execute(payload):
             "status": "failed",
             "reason": reason,
             "verified": False,
+            "execution_state": "FAILED",
+            "execution_contract": (
+                advance_execution_state(execution_contract, "FAILED").model_dump(mode="json")
+                if execution_contract else None
+            ),
             "trace_id": trace_id
         }
 

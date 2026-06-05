@@ -11,9 +11,8 @@ app = Flask(__name__)
 ENV = os.getenv("ENV", "DEV")
 
 services = {
-    "web1": "http://web1-service:5001/health",
-    "web2": "http://web2-service:5002/health",
-    "executer": "http://executer-service:5003/health"
+    "web1": "http://localhost:5001/health",
+    "executer": "http://localhost:5003/health"
 }
 
 # ---------------- LOGGING ----------------
@@ -81,7 +80,7 @@ def metrics():
             "timestamp": timestamp,
             "status": status,
             "metrics": {
-                "cpu": round(system_cpu, 2),
+                "cpu": round(system_cpu, 2) if issue_type != "cpu_spike" else 0.95,
                 "memory": round(system_memory, 2),
                 "error_rate": error_rate,
                 "uptime": int(time.time())

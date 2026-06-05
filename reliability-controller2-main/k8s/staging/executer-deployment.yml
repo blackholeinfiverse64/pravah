@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executer-staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: executer
+      env: staging
+  template:
+    metadata:
+      labels:
+        app: executer
+        env: staging
+    spec:
+      containers:
+      - name: executer
+        image: rayyandevopss/executer-service:latest
+        imagePullPolicy: Always
+
+        ports:
+        - containerPort: 5003
+
+        env:
+        - name: EXECUTION_MODE
+          value: "simulate"
+        - name: SARATHI_URL
+          value: "http://sarathi-staging-service:5001/decision"
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 5003
+          initialDelaySeconds: 5
+          periodSeconds: 5
+
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5003
+          initialDelaySeconds: 10
+          periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: executer-staging-service
+spec:
+  selector:
+    app: executer
+    env: staging
+  ports:
+    - port: 5003
+      targetPort: 5003

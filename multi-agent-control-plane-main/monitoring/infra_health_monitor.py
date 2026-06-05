@@ -186,6 +186,20 @@ class InfraHealthMonitor:
 
         return output
 
+    def run_continuous_monitoring(self, interval_seconds=30):
+        """Run health checks continuously so the container stays alive."""
+        print(f"🚀 Starting infrastructure health monitoring (interval: {interval_seconds}s)")
+        print(f"📝 Logging to: {self.log_file}")
+
+        try:
+            while True:
+                self.log_health_status()
+                print(f"⏰ Next update in {interval_seconds} seconds...")
+                import time
+                time.sleep(interval_seconds)
+        except KeyboardInterrupt:
+            print("\n🛑 Health monitoring stopped by user")
+
 
 
 
@@ -203,13 +217,12 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Infrastructure Health Monitor")
     parser.add_argument("--env", choices=['dev', 'stage', 'prod'], default='dev')
+    parser.add_argument("--continuous", action='store_true', help='Run continuous monitoring')
+    parser.add_argument("--interval", type=int, default=30, help='Monitoring interval in seconds')
     args = parser.parse_args()
     
     monitor = InfraHealthMonitor(args.env)
-    # health_score = monitor.log_health_status()
-    
-    # Exit with error code if health is critical
-    # if health_score < 50:
-    # #     exit(1)
-    # else:
-    #     exit(0)
+    if args.continuous:
+        monitor.run_continuous_monitoring(args.interval)
+    else:
+        monitor.log_health_status()

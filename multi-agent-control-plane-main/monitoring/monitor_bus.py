@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Monitor sovereign bus events in real-time."""
 
-from core.sovereign_bus import bus
+from control_plane.core.sovereign_bus import bus
 import json
 
 def print_event(message):

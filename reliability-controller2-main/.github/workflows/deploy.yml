@@ -1,0 +1,168 @@
+name: PRAVAH FINAL PRODUCTION
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  pravah:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 🔹 Checkout
+    - uses: actions/checkout@v5
+
+    # 🔹 TRACE ID (CI/CD ORIGIN)
+    - name: Generate Trace ID
+      run: |
+        TRACE_ID=core-${{ github.run_id }}
+        echo "TRACE_ID=$TRACE_ID" >> $GITHUB_ENV
+        echo "TRACE_ID=$TRACE_ID"
+
+    # 🔐 Docker Login
+    - name: Login DockerHub
+      run: |
+        echo "${{ secrets.DOCKER_PASSWORD }}" | docker login -u "${{ secrets.DOCKER_USERNAME }}" --password-stdin
+
+    # 🐳 Build & Push
+    - name: Build & Push Images
+      run: |
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/monitor-service:latest ./monitor
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/executer-service:latest ./executer
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/sarathi-service:latest ./sarathi
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/web1-service:latest ./web1
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/web2-service:latest ./web2
+
+        docker push ${{ secrets.DOCKER_USERNAME }}/monitor-service:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/executer-service:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/sarathi-service:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/web1-service:latest
+        docker push ${{ secrets.DOCKER_USERNAME }}/web2-service:latest
+
+    # 🔧 Setup kubectl
+    - uses: azure/setup-kubectl@v5
+
+    - name: Configure kubeconfig
+      run: |
+        mkdir -p $HOME/.kube
+        echo "${{ secrets.KUBECONFIG }}" | base64 -d > $HOME/.kube/config
+
+    # 📦 Create Namespaces
+    - name: Create Namespaces
+      run: |
+        kubectl create namespace staging || true
+        kubectl create namespace prod || true
+
+    # =========================
+    # 🔶 STAGING
+    # =========================
+    - name: Deploy Staging
+      run: |
+        kubectl apply -f k8s/staging/ -n staging
+
+    - name: Wait Staging
+      run: |
+        kubectl rollout status deployment/sarathi-staging -n staging --timeout=60s
+        kubectl rollout status deployment/executer-staging -n staging --timeout=60s
+        kubectl rollout status deployment/monitor-staging -n staging --timeout=60s
+
+    - name: Test Staging
+      run: |
+        kubectl delete pod curl-test --ignore-not-found -n staging
+        kubectl run curl-test --image=curlimages/curl --restart=Never -n staging -- sleep 60
+
+        sleep 5
+
+        for i in {1..5}; do
+          kubectl exec -n staging curl-test -- curl -f http://monitor-staging-service:5004/health && break
+          sleep 3
+        done
+
+        kubectl delete pod curl-test -n staging
+
+    # =========================
+    # 🚀 PROD CORE
+    # =========================
+    - name: Deploy Core Prod
+      run: |
+        kubectl apply -f k8s/sarathi.yml -n prod
+        kubectl apply -f k8s/executer.yml -n prod
+        kubectl apply -f k8s/monitor.yml -n prod
+
+    - name: Wait Core
+      run: |
+        kubectl rollout status deployment/sarathi -n prod --timeout=60s
+        kubectl rollout status deployment/executer -n prod --timeout=60s
+        kubectl rollout status deployment/monitor -n prod --timeout=60s
+
+    # =========================
+    # 🔵 BLUE
+    # =========================
+    - name: Deploy Blue
+      run: |
+        kubectl apply -f k8s/web1-blue.yml -n prod
+        kubectl apply -f k8s/web2-blue.yml -n prod
+        kubectl apply -f k8s/web1-service.yml -n prod
+        kubectl apply -f k8s/web2-service.yml -n prod
+
+    # =========================
+    # 🟢 GREEN
+    # =========================
+    - name: Deploy Green
+      run: |
+        kubectl apply -f k8s/web1-green.yml -n prod
+        kubectl apply -f k8s/web2-green.yml -n prod
+
+    # =========================
+    # 🔄 SWITCH TRAFFIC
+    # =========================
+    - name: Switch Traffic
+      run: |
+        kubectl patch service web1-service -n prod -p '{"spec":{"selector":{"app":"web1","version":"green"}}}'
+        kubectl patch service web2-service -n prod -p '{"spec":{"selector":{"app":"web2","version":"green"}}}'
+
+    # =========================
+    # 📡 CI/CD TRACE → PRAVAH
+    # =========================
+    - name: Send CI/CD Trace to Monitor
+      run: |
+        kubectl delete pod curl-ci --ignore-not-found -n prod
+        kubectl run curl-ci --image=curlimages/curl --restart=Never -n prod -- sleep 30
+
+        sleep 5
+
+        kubectl exec -n prod curl-ci -- \
+          curl -X POST http://monitor-service:5004/track-event \
+          -H "Content-Type: application/json" \
+          -d "{\"user_id\":\"ci\",\"event_type\":\"deployment\",\"timestamp\":$(date +%s),\"session_id\":\"ci\",\"trace_id\":\"$TRACE_ID\"}"
+
+        kubectl delete pod curl-ci -n prod
+
+    # =========================
+    # 🔍 STATUS
+    # =========================
+    - name: Status
+      run: |
+        kubectl get pods -n prod
+        kubectl get svc -n prod
+
+    # =========================
+    # 🧪 FINAL TEST
+    # =========================
+    - name: Test Prod
+      run: |
+        kubectl delete pod curl-test --ignore-not-found -n prod
+        kubectl run curl-test --image=curlimages/curl --restart=Never -n prod -- sleep 60
+
+        sleep 5
+
+        for i in {1..5}; do
+          kubectl exec -n prod curl-test -- curl -f http://monitor-service:5004/health && break
+          sleep 3
+        done
+
+        kubectl delete pod curl-test -n prod
+
+    - name: Done
+      run: echo "🚀 FULL DEPLOYMENT SUCCESS"

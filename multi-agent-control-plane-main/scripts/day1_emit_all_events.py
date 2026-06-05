@@ -23,7 +23,7 @@ def emit_all_runtime_events(env="stage"):
         os.remove(proof_log)
         print(f"Cleared previous proof log: {proof_log}")
     
-    from core.guaranteed_events import emit_deploy_event, emit_scale_event, emit_restart_event, emit_crash_event, emit_overload_event
+    from control_plane.core.guaranteed_events import emit_deploy_event, emit_scale_event, emit_restart_event, emit_crash_event, emit_overload_event
     
     # Event 1: Deploy
     print("\n1. Emitting DEPLOY event...")
@@ -43,7 +43,7 @@ def emit_all_runtime_events(env="stage"):
     # Event 4: Crash
     print("4. Emitting CRASH event...")
     # PART 1: Log failure injection before runtime emit
-    from core.proof_logger import write_proof, ProofEvents
+    from control_plane.core.proof_logger import write_proof, ProofEvents
     write_proof(ProofEvents.FAILURE_INJECTED, {
         'env': env,
         'service': 'app',
@@ -53,7 +53,7 @@ def emit_all_runtime_events(env="stage"):
     
     # Force restart action for crash recovery through canonical execution gate
     print("   -> Forcing RESTART recovery action for crash...")
-    from core.rl_orchestrator_safe import get_safe_executor
+    from control_plane.core.rl_orchestrator_safe import get_safe_executor
     crash_executor = get_safe_executor(env)
     crash_state = {'env': env, 'event_type': 'crash', 'service': 'app', 'dataset': 'crash_dataset.csv'}
     crash_executor.execute_action('restart', crash_state, source='rl_decision_layer')
@@ -87,7 +87,7 @@ def emit_all_runtime_events(env="stage"):
     })
     
     # Emit false alarm event that should trigger NOOP
-    from core.guaranteed_events import emit_runtime_event
+    from control_plane.core.guaranteed_events import emit_runtime_event
     emit_runtime_event(env, 'false_alarm', 'success', 0, 'false_alarm_dataset.csv', event_id='false_alarm_001')
     time.sleep(1)
     
