@@ -341,16 +341,20 @@ class AgentRuntime:
             return
         
         # VALIDATE
-        # validation_result = self._validate(observation)
-        # VALIDATE (TEMP BYPASS FOR TESTING)
-
-     # 👉 FORCE STATE TRANSITION (VERY IMPORTANT)
-        self.state_manager.transition_to(AgentState.VALIDATING, "manual_validation_bypass")
-
-        validation_result = {
-            "valid": True,
-            "validated_data": observation
-        }
+        self.state_manager.transition_to(AgentState.VALIDATING, "agent_validation_step")
+        from security.trace_consumption import is_trace_consumed
+        
+        trace_id = observation.get("trace_id")
+        if trace_id and is_trace_consumed(trace_id):
+            validation_result = {
+                "valid": False,
+                "error_message": f"Trace {trace_id} already consumed"
+            }
+        else:
+            validation_result = {
+                "valid": True,
+                "validated_data": observation
+            }
         
         if not validation_result['valid']:
             # Invalid data, log and return to idle
@@ -359,6 +363,11 @@ class AgentRuntime:
                 validation_result,
                 self.state_manager.current_state.value
             )
+            self._last_decision = {
+                "status": "error",
+                "message": validation_result.get("error_message", "validation_failed"),
+                "decision": {"action_name": "noop", "source": "validation_failure", "confidence": 0.0}
+            }
             return
         
         # DECIDE
@@ -841,6 +850,8 @@ class AgentRuntime:
                 execution_result = execute(signal, headers)
                 # execute() emits to pravah_stream and returns the modified signal
                 if execution_result:
+                    from security.trace_consumption import consume_trace
+                    consume_trace(trace_id)
                     execution_result = {
                         'status': 'success',
                         'execution_id': execution_result.get('execution_id'),

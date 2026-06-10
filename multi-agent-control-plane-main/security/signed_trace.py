@@ -9,11 +9,29 @@ import uuid
 from dataclasses import asdict, dataclass
 from typing import Any, Mapping
 
-SECRET_KEY = os.getenv("LINEAGE_SIGNING_KEY", "pravah-sovereign-lineage-key").encode("utf-8")
+_key = os.getenv("LINEAGE_SIGNING_KEY")
+if not _key:
+    if os.getenv("ENVIRONMENT", "").strip().lower() == "prod":
+        raise ValueError("LINEAGE_SIGNING_KEY must be set in production")
+    _key = "pravah-sovereign-lineage-key"
+SECRET_KEY = _key.encode("utf-8")
 
+
+def make_canonical(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: make_canonical(v) for k, v in sorted(obj.items())}
+    elif isinstance(obj, (list, tuple)):
+        return [make_canonical(x) for x in obj]
+    elif isinstance(obj, set):
+        return [make_canonical(x) for x in sorted(list(obj), key=str)]
+    elif hasattr(obj, "model_dump") and callable(getattr(obj, "model_dump")):
+        return make_canonical(obj.model_dump(mode="json"))
+    elif hasattr(obj, "__dict__"):
+        return make_canonical(obj.__dict__)
+    return obj
 
 def canonicalize(payload: Any) -> str:
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+    return json.dumps(make_canonical(payload), separators=(",", ":"), default=str)
 
 
 def payload_hash(payload: Any) -> str:

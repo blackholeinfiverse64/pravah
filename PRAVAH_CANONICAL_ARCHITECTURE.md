@@ -1,288 +1,134 @@
-# PRAVAH_CANONICAL_ARCHITECTURE
+# PRAVAH CANONICAL ARCHITECTURE
 
-**Status:** Constitutional reference material
+**Status:** Constitutional Reference Material
+**Scope:** Pravah Converged System Architecture
 
-This document defines the canonical architecture of Pravah. It is the authority boundary for all Pravah implementations in this workspace and is intended to prevent role drift, schema drift, and hidden fallback behavior.
-
-Primary evidence sources:
-- [multi-agent-control-plane-main/README.md](multi-agent-control-plane-main/README.md)
-- [multi-agent-control-plane-main/ARCHITECTURE_CURRENT.md](multi-agent-control-plane-main/ARCHITECTURE_CURRENT.md)
-- [multi-agent-control-plane-main/RUNTIME_CONTRACT.md](multi-agent-control-plane-main/RUNTIME_CONTRACT.md)
-- [PRAVAH_SYSTEM_DOSSIER.md](PRAVAH_SYSTEM_DOSSIER.md)
-- [FULL_CONVERGENCE_MAP.md](FULL_CONVERGENCE_MAP.md)
+This document establishes the official architectural boundaries, authority declarations, and schema disciplines for all Pravah control plane systems within this workspace. It serves as the constitutional baseline for engineering decisions, deployment configurations, and anti-drift validation.
 
 ---
 
-## Canonical Role
-
-Pravah is the canonical multi-agent control-plane platform for this workspace. Its role is to ingest runtime signals, validate them, decide on actions, enforce safety and governance rules, execute approved actions, observe outcomes, and expose an operator-facing dashboard.
-
-Pravah also serves as the coordination layer between runtime monitoring, decisioning, execution, and operator visibility. The canonical runtime loop is the sense -> validate -> decide -> enforce -> act -> observe -> explain sequence described in [multi-agent-control-plane-main/README.md](multi-agent-control-plane-main/README.md).
+## 1. Canonical Role
+Pravah is the canonical autonomous control plane platform for multi-application environments. Its role is to execute a continuous operational cycle (**Sense → Validate → Decide → Enforce → Act → Observe → Explain**) across target systems. It acts as the coordinator of real-time telemetry, cryptographic action governance, reinforcement learning decisions, and operator dashboards, ensuring that no infrastructure modification is made without deterministic safety gates.
 
 ---
 
-## Upstream Dependencies
+## 2. Upstream Dependencies
+Pravah depends on the following upstream components:
+* **Telemetry Providers:** Instrumented applications (such as [web1](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/reliability-controller2-main/web1/app.py) and [web2](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/reliability-controller2-main/web2/app.py)) that emit metrics (CPU, Memory, error rates, latencies).
+* **Observability Stream:** The OTel-style monitor service ([monitor/app.py](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/reliability-controller2-main/monitor/app.py)) publishing real-time Server-Sent Events (SSE).
+* **App Registry:** Central config lists defining managed deployments (e.g. `control_plane/config/apps_registry.json`).
 
-Pravah depends on the following upstream inputs and systems:
-
-- Runtime payload producers that emit the canonical payload defined in [multi-agent-control-plane-main/RUNTIME_CONTRACT.md](multi-agent-control-plane-main/RUNTIME_CONTRACT.md).
-- Control-plane runtime intake and governance logic in `control_plane/api/agent_api.py` and related runtime validation modules.
-- Decision Brain logic exposed through the FastAPI backend in `control_plane/backend/app/main.py`.
-- Optional observability signals from runtime pollers and runtime metrics files when present.
-- App registry data from `control_plane/config/apps_registry.json`.
-- Enforcement headers and trace propagation expectations from Sarathi and the control-plane execution path.
-
-Dependency rule:
-- Upstream systems may feed Pravah.
-- Upstream systems may not redefine Pravah's canonical payload, execution gates, or authority model.
+*Dependency Rule:* Upstream systems may feed telemetry signals into Pravah but must never validate, enforce, or decide actions independently.
 
 ---
 
-## Downstream Participants
+## 3. Downstream Participants
+Pravah acts as the authority for:
+* **The Action Executor:** The target service runners (e.g. Rayyan's [executer/app.py](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/reliability-controller2-main/executer/app.py)) that receive signed execution payloads.
+* **Operator Visualizations:** Curated Dashboards ([unified-monitor-dashboard-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/unified-monitor-dashboard-main)) consuming decision metrics and timelines.
+* **Lineage Replayers:** Analytical audit processes querying cryptographic execution states.
 
-Pravah serves the following downstream participants:
-
-- Operator dashboard users through `dashboard/frontend`.
-- Execution consumers that depend on approved actions from the control plane.
-- Decision and lineage consumers that require runtime summaries, recent activity, and decision summaries.
-- Integration consumers that read `/live-dashboard`, `/orchestration/metrics`, `/control-plane/status`, and related APIs.
-
-Downstream rule:
-- Participants may consume Pravah outputs.
-- Participants may not mutate canonical runtime state unless they are explicitly part of the execution boundary.
+*Downstream Rule:* Downstream components consume output states but cannot modify active runtime environments or bypass enforcement policies.
 
 ---
 
-## Execution Boundary
+## 4. Execution Boundary
+The execution boundary begins when a validated telemetry payload is ingested at the control plane backend (`/control-plane/runtime-ingest`) and ends when a signed action is dispatched to and verified by the executer.
+* **Inside the Execution Boundary:** State encoding, Q-learning updates, action guards, cooldown checks, HMAC signing, execution, and state lineage transition advances.
+* **Outside the Execution Boundary:** View layouts, dashboard queries, metric pollers, and offline log ingestion.
 
-The execution boundary begins when a validated runtime payload enters Pravah and ends when an approved action is executed or refused.
-
-Inside the execution boundary:
-- Payload validation.
-- Governance checks.
-- Cooldown enforcement.
-- Manual freeze enforcement.
-- Decision generation.
-- Execution admission and refusal semantics.
-
-Outside the execution boundary:
-- UI rendering.
-- External telemetry collection.
-- Independent replay analysis.
-- Read-only dashboards and reports.
-
-Boundary rule:
-- Only canonical runtime intake may drive execution decisions.
-- Dashboards must never be treated as execution authorities.
+*Boundary Rule:* Actions altering infrastructure state must pass through the execution boundary; direct execution via bypass triggers is strictly illegal.
 
 ---
 
-## Validation Boundary
-
-Validation is a hard gate. The canonical runtime payload must validate against [multi-agent-control-plane-main/runtime_payload_schema.json](multi-agent-control-plane-main/runtime_payload_schema.json) before any execution path is allowed.
-
-Validation boundary requirements:
-- Required fields must be present.
-- Extra fields are not permitted.
-- Invalid payloads must be refused, not coerced.
-- Schema discipline takes precedence over convenience.
-
-Validation modules referenced in the repo:
-- `control_plane/core/input_validator.py`
-- `control_plane/core/runtime_event_validator.py`
-
-Validation rule:
-- If a payload cannot be validated, Pravah must reject it and disclose the refusal explicitly.
+## 5. Validation Boundary
+Validation is a hard gate. Intake payloads must validate against [runtime_payload_schema.json](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/multi-agent-control-plane-main/runtime_payload_schema.json) before crossing the execution boundary.
+* Payload fields must match required types exactly (e.g. fractional floats for CPU/memory telemetry, trace UUIDs).
+* Payloads violating schema validations are rejected immediately. Silent corrections or fallbacks are prohibited.
 
 ---
 
-## Authority Declaration
+## 6. Authority Declaration
+* **Pravah IS:** The central authority for runtime ingestion, reinforcement learning decision generation, cryptographic action signatures, policy governance checks, and lineage verification.
+* **Pravah IS NOT:** A raw metric storage database, an OTel transport pipeline, or a generic website dashboard displaying unverified synthetic telemetry.
 
-Pravah IS:
-- The canonical control-plane authority for runtime intake, decisioning, governance, and operator-facing status.
-- The owner of runtime payload validation and the runtime-to-decision execution path.
-- The consumer and summarizer of approved upstream telemetry.
-- The authority for safe action admission and refusal semantics.
-
-Pravah IS NOT:
-- The canonical observability stream transport.
-- The canonical enforcement engine for Sarathi-style policy approval.
-- The canonical source of truth for raw infrastructure telemetry if a specialized observability system exists upstream.
-- A free-form dashboard that may invent or reshape runtime truth.
-
-Authority rule:
-- If a component changes runtime action eligibility, it belongs in the execution boundary.
-- If a component only observes or visualizes, it does not gain authority over runtime state.
+*Authority Rule:* Subsystems that determine action eligibility or check safety constraints reside inside Pravah's execution authority. Visualization-only elements hold zero authority.
 
 ---
 
-## Non-Authority Declaration
-
-Pravah does not own the following unless explicitly delegated by a canonical upstream service:
-
-- Raw service telemetry collection.
-- Trace store replay semantics.
-- Observability transport internals.
-- External caller identity trust beyond enforced request headers and schema checks.
-- Synthetic metric fabrication.
-
-Non-authority rule:
-- Visualization data is not operational truth unless it can be traced to a validated upstream source.
-- Demo values, hash-based metrics, or fallback placeholders are not canonical.
+## 7. Non-Authority Declaration
+Pravah does not own:
+* Raw network trace logging or OTel packet aggregation.
+* Target system execution contexts (such as local OS, Docker, or Kubernetes clusters), which are owned by host engines.
+* External caller authorization beyond verification of cryptographic request signatures.
 
 ---
 
-## Replay Boundary
-
-Replay is read-only and must never alter live runtime state.
-
-Canonical replay scope:
-- Decision history.
-- Execution lineage.
-- Runtime snapshots.
-- Operator audit trails.
-
-Replay exclusions:
-- Live execution gates.
-- Manual freeze state changes.
-- Governance decisions for the active runtime cycle.
-- Any write path that could affect future decisioning.
-
-Replay rule:
-- Replay may explain what happened.
-- Replay may not decide what happens next.
+## 8. Replay Boundary
+Replay is strictly read-only and must never mutate system states, Q-tables, or database files.
+* **Inside Replay Boundary:** Reading cryptographic journals (`trace_log.jsonl`), verifying state-history hash chains, and debugging logic transitions.
+* **Outside Replay Boundary:** Writing new decisions, updating weights, or triggering docker/k8s actions.
 
 ---
 
-## Observability Boundary
-
-Pravah may consume observability data and present it, but it must not redefine observability semantics.
-
-Observability in Pravah includes:
-- Runtime health summaries.
-- Dashboard metrics.
-- Decision summaries.
-- Recent activity views.
-- File status and deployment readiness indicators.
-
-Observability outside Pravah's authority:
-- Packet-level tracing internals.
-- Trace queue semantics.
-- Durable event transport guarantees.
-- Stream isolation proofs.
-
-Observability rule:
-- Pravah may aggregate observability data into operator views.
-- Pravah may not claim transport-level guarantees it does not implement.
+## 9. Observability Boundary
+Pravah aggregates observability data to present runtime states to operators, but it does not define log transport semantics.
+* Observability data displayed on dashboards must match verified backend logs.
+* Observability components cannot intercept or alter the flow of action execution.
 
 ---
 
-## Enforcement Interaction
-
-Pravah interacts with enforcement as a consumer and orchestrator, not as the enforcement authority itself.
-
-Required enforcement behaviors:
-- Honor `X-CALLER` and `X-TRACE-ID` style provenance when present.
-- Refuse bypass attempts.
-- Preserve decision and execution lineage where supported.
-- Route approved actions through governed executors.
-
-Interaction rule:
-- Enforcement systems may block Pravah actions.
-- Pravah may not bypass an enforcement system by inventing local authority.
+## 10. Enforcement Interaction
+Pravah interacts with the enforcement layer (e.g. Sarathi gating) to protect downstreams.
+* Executors must reject any request that does not contain valid cryptographic signatures and expected headers.
+* Cooldown managers must suppress decision actions for a minimum of 60 seconds (15s for local tests) to prevent cascade action storms.
 
 ---
 
-## Schema Discipline
-
-The canonical schema for runtime intake is frozen in [multi-agent-control-plane-main/runtime_payload_schema.json](multi-agent-control-plane-main/runtime_payload_schema.json).
-
-Schema discipline requirements:
-- Do not add fields silently.
-- Do not infer missing fields.
-- Do not reshape required field types.
-- Do not replace the canonical payload with ad hoc dashboard objects.
-
-Schema hierarchy:
-1. Canonical runtime payload schema.
-2. Internal enrichment only after validation.
-3. Dashboard view models derived from canonical data.
-
-Schema rule:
-- View models are not contracts.
-- Contracts are not suggestions.
+## 11. Schema Discipline
+All telemetry, decision, and execution payloads must adhere to strict schemas.
+* Schema drift is prevented by forcing version checks (`v1` parameters).
+* Telemetry inputs using fractional metrics (e.g., `0.95` CPU) must be scaled to percentages (`95.0`) at the engine border to match RL state encoders.
 
 ---
 
-## Hidden-State Disclosure
-
-Any hidden state that can affect Pravah output must be disclosed.
-
-Hidden-state examples:
-- In-memory decision buffers.
-- Fallback demo values.
-- Hash-based synthetic metrics.
-- Background loop status.
-- Integration bridge availability.
-
-Disclosure rule:
-- If output depends on hidden state, the UI or API must mark that output as derived, partial, demo, unavailable, or fallback.
-- Silent fallback is prohibited.
-
-Pravah must explicitly disclose:
-- Whether a value is live, derived, cached, demo, or unavailable.
-- Whether a subsystem is connected or disconnected.
-- Whether a metric is real, computed, or placeholder.
+## 12. Hidden-State Disclosure
+Pravah must operate transparently. Silent fallbacks are prohibited.
+* Dashboards must disclose if data is live, cached, derived, or placeholder/demo.
+* Disconnection of decision engines or databases must trigger immediate UI degradation alerts.
 
 ---
 
-## Deployment Model
-
-Pravah deploys as a three-service local topology in the current repo:
-
-1. Flask Control Plane API on port 7000.
-2. FastAPI Decision Brain API on port 8000.
-3. Next.js frontend on port 4500.
-
-Deployment rules:
-- Local development may use separate processes.
-- Production deployment must preserve the same authority boundaries.
-- Runtime intake, decisioning, and dashboard rendering must remain separately identifiable.
-- Deployment shortcuts may not collapse validation, decision, and display into one opaque service.
-
-Deployment rule:
-- A deployment may change packaging.
-- A deployment may not change constitutional authority.
+## 13. Deployment Model
+Pravah deploys locally as a decoupled microservices topology:
+1. **Control Plane API & Agent Loop:** [multi-agent-control-plane-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/multi-agent-control-plane-main) (Port `8000`).
+2. **RL Decision Brain (Brain):** [pravah-integration.py-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/pravah-integration.py-main) (Port `8008` / persistent JSON Q-table).
+3. **Observability Aggregator:** [reliability-controller2-main/monitor](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/reliability-controller2-main/monitor) (Port `5004` / SSE `/signals/stream`).
+4. **Action Executor:** [reliability-controller2-main/executer](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/reliability-controller2-main/executer) (Port `5003` / HMAC signed execution boundary).
+5. **Unified Dashboard Frontend:** [unified-monitor-dashboard-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/unified-monitor-dashboard-main) (Port `8050`).
 
 ---
 
-## Anti-Drift Protections
-
-To prevent architecture drift, the following protections are mandatory:
-
-- Canonical schema freeze for runtime payloads.
-- Explicit authority declarations for each subsystem.
-- Read-only replay boundaries.
-- No silent fallback for missing telemetry or disconnected integrations.
-- No synthetic metrics in production pathways unless explicitly marked demo.
-- Single source of truth for runtime contracts.
-- Versioned documentation for runtime, execution, and observability roles.
-- Cross-check dashboard fields against backend endpoints before release.
-- Require explicit disclosure when a value is derived or placeholder.
-
-Anti-drift rule:
-- If a new component changes runtime meaning, replay meaning, or observability meaning, it must be reconciled against this document before it becomes canonical.
+## 14. Anti-Drift Protections
+To maintain architectural integrity, all components must:
+* Validate incoming schemas.
+* Verify request signatures (HMAC SHA256).
+* Enforce state prerequisites (Phase 4 Semantic Transition verification: `CREATED` -> `APPROVED` -> `EXECUTED` -> `COMPLETED`).
+* Avoid hardcoding user-specific local filesystem paths (e.g. `C:\Users\spal4\...`).
+* Disclose derived or placeholder status states.
 
 ---
 
-## Constitutional Summary
+## 15. Constitutional Definitions
 
-Pravah IS:
-- The canonical multi-agent control-plane authority for runtime validation, decisioning, governance, execution, and operator visibility.
+### Pravah IS:
+* A state-machine-driven autonomous DevOps control plane.
+* A cryptographic ledger of execution lineage.
+* An environment-aware reinforcement learning decision authority.
+* An enforcer of deterministic cooldown gates.
 
-Pravah IS NOT:
-- The observability transport itself.
-- The Sarathi enforcement authority.
-- A place where hidden or synthetic state can masquerade as operational truth.
-
-This document is the constitutional reference material for Pravah architecture decisions in this workspace.
+### Pravah IS NOT:
+* A generic dashboard for unvalidated metric displays.
+* A mock data generator.
+* A direct executor of unverified command lines.
+* A state-free routing bridge.

@@ -388,6 +388,8 @@ class ActionGovernance:
                 should_block=True,
                 reason=GovernanceReason.ACTION_NOT_ELIGIBLE.value,
                 policy_id=self.POLICY_ID,
+                admission_state=AdmissionState.EXECUTION_DENIED.value,
+                rejection_code=RejectionCode.EXECUTION_NOT_PERMITTED.value,
                 details={
                     'action': action,
                     'env': self.env,
@@ -425,6 +427,8 @@ class ActionGovernance:
                     should_block=True,
                     reason=GovernanceReason.PREREQUISITE_NOT_MET.value,
                     policy_id=self.POLICY_ID,
+                    admission_state=AdmissionState.EXECUTION_DENIED.value,
+                    rejection_code=RejectionCode.EXECUTION_NOT_PERMITTED.value,
                     details={
                         'action': action,
                         'missing_prerequisite': 'app_name',
@@ -440,6 +444,8 @@ class ActionGovernance:
                     should_block=True,
                     reason=GovernanceReason.PREREQUISITE_NOT_MET.value,
                     policy_id=self.POLICY_ID,
+                    admission_state=AdmissionState.EXECUTION_DENIED.value,
+                    rejection_code=RejectionCode.EXECUTION_NOT_PERMITTED.value,
                     details={
                         'action': action,
                         'missing_prerequisite': 'previous_version',
@@ -479,6 +485,8 @@ class ActionGovernance:
                     should_block=True,
                     reason=GovernanceReason.COOLDOWN_ACTIVE.value,
                     policy_id=self.POLICY_ID,
+                    admission_state=AdmissionState.POLICY_REJECTED.value,
+                    rejection_code=RejectionCode.GOVERNANCE_REJECTED.value,
                     details={
                         'action': action,
                         'last_execution': last_execution,
@@ -518,6 +526,8 @@ class ActionGovernance:
                 should_block=True,
                 reason=GovernanceReason.REPETITION_LIMIT_EXCEEDED.value,
                 policy_id=self.POLICY_ID,
+                admission_state=AdmissionState.POLICY_REJECTED.value,
+                rejection_code=RejectionCode.GOVERNANCE_REJECTED.value,
                 details={
                     'action': action,
                     'action_history': [r.action for r in recent_actions],

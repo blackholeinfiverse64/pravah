@@ -138,6 +138,9 @@ class LineageVerifier:
             event = _event_dict(raw_event)
             payload = _payload_dict(replay_payloads[index])
 
+            if index == 0 and event.get("state") != "CREATED":
+                raise SequenceViolationError("REPLAY_REJECTED_MUST_START_WITH_CREATED")
+
             cls.verify_event_signature(event)
             cls.verify_payload_integrity(payload, event["payload_hash"])
 

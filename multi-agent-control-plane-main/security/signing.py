@@ -9,6 +9,25 @@ import time
 MAX_TRACE_AGE_SECONDS = 300
 MAX_SERVICE_REQUEST_AGE_SECONDS = 300
 
+def make_canonical(obj: Any) -> Any:
+    from typing import Any as TypAny
+    if isinstance(obj, dict):
+        return {k: make_canonical(v) for k, v in sorted(obj.items())}
+    elif isinstance(obj, (list, tuple)):
+        return [make_canonical(x) for x in obj]
+    elif isinstance(obj, set):
+        return [make_canonical(x) for x in sorted(list(obj), key=str)]
+    elif hasattr(obj, "model_dump") and callable(getattr(obj, "model_dump")):
+        return make_canonical(obj.model_dump(mode="json"))
+    elif hasattr(obj, "__dict__"):
+        return make_canonical(obj.__dict__)
+    return obj
+
+def canonical_serialize(obj: Any) -> str:
+    return json.dumps(make_canonical(obj), separators=(',', ':'), default=str)
+
+from typing import Any
+
 class PayloadSigner:
     """Signs and verifies payloads for SSPL Phase III compliance."""
     
@@ -26,7 +45,7 @@ class PayloadSigner:
     def sign_payload(self, payload_dict: dict) -> dict:
         """Sign payload and return with signature field."""
         # Create canonical string from payload
-        canonical = json.dumps(payload_dict, sort_keys=True, separators=(',', ':'))
+        canonical = canonical_serialize(payload_dict)
         
         # Generate HMAC-SHA256 signature
         signature = hmac.new(
@@ -56,7 +75,7 @@ class PayloadSigner:
         payload_copy.pop('signature_algorithm', None)
         
         # Recreate canonical string
-        canonical = json.dumps(payload_copy, sort_keys=True, separators=(',', ':'))
+        canonical = canonical_serialize(payload_copy)
         
         # Generate expected signature
         expected_signature = hmac.new(
@@ -88,11 +107,7 @@ def verify_payload(payload_dict: dict, signature: str = None) -> bool:
 
 
 def generate_body_hash(payload_dict: dict) -> str:
-    canonical = json.dumps(
-        payload_dict,
-        sort_keys=True,
-        separators=(',', ':')
-    )
+    canonical = canonical_serialize(payload_dict)
 
     return hashlib.sha256(
         canonical.encode()

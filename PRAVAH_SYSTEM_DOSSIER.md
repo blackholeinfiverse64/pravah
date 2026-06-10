@@ -1,326 +1,265 @@
-PRAVAH SYSTEM DOSSIER
+# PRAVAH SYSTEM DOSSIER: CENSUS & AUDIT
 
-This dossier records an evidence-backed census of the Pravah ecosystem found in the workspace. Every statement below cites repository artifacts.
-
----
-
-System: Multi-Agent Control Plane (Pravah Control Plane)
-- Builder / Owner: Shivam (per provided builder mapping; primary repo: multi-agent-control-plane-main)
-- Purpose: Autonomous control-plane for multi-application operations (sense → validate → decide → enforce → act → observe → explain).
-- Architecture summary: Flask Control Plane API (port 7000), FastAPI Decision Brain (port 8000), Next.js Frontend (port 4500). Governance and validation under `control_plane/core`.
-- Repo / location: multi-agent-control-plane-main
-- Execution status: Documented Version: 1.0.0 and local run instructions in README.
-- Runtime status: Local topology described (Flask, FastAPI, Next.js) with health endpoints and API surface.
-- Integration status: Exposes `/api/runtime`, `/decision`, `/control-plane/*`. Integrates backend and frontend; runtime contract declared.
-- Replay maturity: `runtime_payload_schema.json` exists (runtime contract) — schema present but no explicit durable replay store documented (medium confidence).
-- Observability maturity: Dashboard + `/orchestration/metrics` and health endpoints; frontend present for live visualization.
-- Deployment maturity: `render.yaml` and `docker-compose.yml` referenced; README documents Render start command (medium confidence).
-- Known risks: Multiple runtimes (Flask + FastAPI + Next) increase configuration surface; legacy docker-compose includes parallel services (evidence: README notes legacy services).
-- Current constitutional positioning: Authority for runtime ingestion and control-plane endpoints; Decision Brain (FastAPI) is a Consumer/Producer of decisions (see Evidence).
-- Duplicate / overlap analysis: Decision logic and schemas also appear in other repos (see `decision-brain-cp.py-main`, `pravah-integration.py-main`). Full overlap analysis deferred to Phase 2.
-- Recommendation: Keep as primary control-plane; centralize runtime contract and decision ingestion endpoints.
-
-Evidence:
-- [multi-agent-control-plane-main/README.md](multi-agent-control-plane-main/README.md)
-- [multi-agent-control-plane-main/control_plane/api/agent_api.py](multi-agent-control-plane-main/control_plane/api/agent_api.py)
-- [multi-agent-control-plane-main/control_plane/backend/run.py](multi-agent-control-plane-main/control_plane/backend/run.py)
-- [multi-agent-control-plane-main/runtime_payload_schema.json](multi-agent-control-plane-main/runtime_payload_schema.json)
-- [multi-agent-control-plane-main/render.yaml](multi-agent-control-plane-main/render.yaml)
-- [multi-agent-control-plane-main/agent_runtime.py](multi-agent-control-plane-main/agent_runtime.py)
+This dossier contains the official, evidence-backed census and architectural audit of the Pravah ecosystem found in the workspace (`c:/Users/black/OneDrive/Desktop/Pravah/BHIV`). Every claim below is mapped to specific code files and structures with their exact file paths, ports, and configuration keys.
 
 ---
 
-System: Reliability / Live Observability Stream
-- Builder / Owner: Rayyan (primary repo: reliability-controller2-main)
-- Purpose: Real-time observability stream (SSE) and trace-linked signals across web, monitor, sarathi, executer, stream.
-- Architecture summary: Web layer → Monitor → Sarathi → Executer → Monitor → Stream (SSE). Trace propagation and strict trace_id handling emphasized.
-- Repo / location: reliability-controller2-main
-- Execution status: README states "Production-demo ready" and provides example flows.
-- Runtime status: SSE stream endpoints and example curl flows documented; explicit concurrency and trace mixing proofs provided.
-- Integration status: Integrates with Sarathi enforcement; expects `X-TRACE-ID` propagation and `X-CALLER` enforcement for execution.
-- Replay maturity: Trace-linked event proofs (`CONCURRENCY_PROOF.md`) show per-trace isolation and FIFO queue behavior; no durable replay store described (medium confidence).
-- Observability maturity: High — SSE stream, demo steps, concurrency proof, and review packet artifacts exist.
-- Deployment maturity: GitHub Actions workflow and K8s manifests present (.github/workflows/deploy.yml references k8s manifests) indicating CI/CD deployment pipelines.
-- Known risks: Reliance on header propagation and implicit trust of headers for caller identity.
-- Current constitutional positioning: Observer (stream) and Enforcer interactions (via Sarathi). Sarathi acts as Enforcer for execution gating.
-- Duplicate / overlap analysis: Observability streams and dashboards exist in other repos (UNIFIED-DASHBOARD.PY-main, unified-monitor-dashboard-main) — duplicate dashboard implementations (see below).
-- Recommendation: Keep as canonical real-time observability stream; formalize durable replay store for longer-term trace replay.
+## Workspace Map & Owner Attribution
+We identified **11 distinct repositories/folders** within the workspace. Using the provided owner mappings (*Shivam: control plane; Rayyan: reliability controllers and monitors; Ritesh: enforcement, decision brains, and dashboards*), the attribution is:
 
-Evidence:
-- [reliability-controller2-main/README.md](reliability-controller2-main/README.md)
-- [reliability-controller2-main/REVIEW_PACKET.md](reliability-controller2-main/REVIEW_PACKET.md)
-- [reliability-controller2-main/CONCURRENCY_PROOF.md](reliability-controller2-main/CONCURRENCY_PROOF.md)
-- [reliability-controller2-main/.github/workflows/deploy.yml](reliability-controller2-main/.github/workflows/deploy.yml)
-- [reliability-controller2-main/DEMO_STEPS.md](reliability-controller2-main/DEMO_STEPS.md)
+* **Shivam (1 repo):** [multi-agent-control-plane-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/multi-agent-control-plane-main)
+* **Rayyan (3 repos):** [reliability-controller-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/reliability-controller-main), [reliability-controller2-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/reliability-controller2-main), [monitoring-service-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/monitoring-service-main)
+* **Ritesh (7 repos):** [SAARTHI-ENFORCEMENT.PY-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/SAARTHI-ENFORCEMENT.PY-main), [saartthi-integration.py-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/saartthi-integration.py-main), [decision-brain-cp.py-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/decision-brain-cp.py-main), [pravah-integration.py-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/pravah-integration.py-main), [pipeline-integration-py-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/pipeline-integration-py-main), [UNIFIED-DASHBOARD.PY-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/UNIFIED-DASHBOARD.PY-main), [unified-monitor-dashboard-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/unified-monitor-dashboard-main)
 
 ---
 
-System: Sarathi Enforcement (proof-of-concept)
-- Builder / Owner: Ritesh (repos: SAARTHI-ENFORCEMENT.PY-main and saartthi-integration.py-main)
-- Purpose: Deterministic governance / enforcement flow: Sarathi approves/blocks actions; Executer rejects requests missing `X-CALLER: sarathi`.
-- Architecture summary: `core` calls `Sarathi` for decision → Sarathi returns ALLOW/BLOCK → `core` forwards approved actions to `executer` with `X-CALLER: sarathi` header. Trace propagation required.
-- Repo / location: SAARTHI-ENFORCEMENT.PY-main, saartthi-integration.py-main
-- Execution status: README includes run instructions for three uvicorn services and test scripts demonstrating enforcement semantics.
-- Runtime status: Pydantic schemas enforce `trace_id` presence; executer checks `X-CALLER` header and returns 403 if missing.
-- Integration status: Test scripts and curl examples show direct integration patterns; review packet documents flow.
-- Replay maturity: Trace propagation emphasized; no explicit replay persistence described (low/medium confidence).
-- Observability maturity: Dashboard artifacts and review packets exist; enforcement emits signals.
-- Deployment maturity: Run instructions are manual (`uvicorn`); test scripts present; no orchestration manifests in these repos.
-- Known risks: Header-based caller identity is brittle across proxies; recommendation to harden with signed headers or mTLS.
-- Current constitutional positioning: Sarathi = Enforcer; Core = Authority caller that must consult Sarathi before execution; Executer = Non-Authority Enforcer (rejects bypass).
-- Duplicate / overlap analysis: Sarathi enforcement logic is referenced by `multi-agent-control-plane-main` (agent_runtime imports sarathi router), indicating reused enforcement pattern.
-- Recommendation: Keep Sarathi as canonical enforcement; refactor to replace header-only trust with stronger provenance (evidence-backed recommendation).
-
-Evidence:
-- [SAARTHI-ENFORCEMENT.PY-main/sarathi/app.py](SAARTHI-ENFORCEMENT.PY-main/sarathi/app.py)
-- [SAARTHI-ENFORCEMENT.PY-main/core/app.py](SAARTHI-ENFORCEMENT.PY-main/core/app.py)
-- [SAARTHI-ENFORCEMENT.PY-main/executer/app.py](SAARTHI-ENFORCEMENT.PY-main/executer/app.py)
-- [SAARTHI-ENFORCEMENT.PY-main/review_packets/sarathi_enforcement.md](SAARTHI-ENFORCEMENT.PY-main/review_packets/sarathi_enforcement.md)
-- [saartthi-integration.py-main/sarathi/app.py](saartthi-integration.py-main/sarathi/app.py)
-- [saartthi-integration.py-main/executer/app.py](saartthi-integration.py-main/executer/app.py)
-- [saartthi-integration.py-main/test_scripts/test_enforcement.sh](saartthi-integration.py-main/test_scripts/test_enforcement.sh)
+## 1. Multi-Agent Control Plane (Converged Edition)
+* **System Name:** Multi-Agent Control Plane
+* **Builder / Owner:** Shivam
+* **Purpose:** Acts as the primary autonomous orchestration coordinator. It senses system state, performs governance and security validations, creates cryptographic state lineage contracts, executes container adjustments, and monitors outcome feedback.
+* **Architecture Summary:** 
+  * Decentralized loop structure composed of a FastAPI backend ([main.py](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/multi-agent-control-plane-main/control_plane/backend/app/main.py) on Port `8000`), a Redis event bus on Port `6379`, local deployment scale workers ([multi_deploy_agent.py](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/multi-agent-control-plane-main/control_plane/agents/multi_deploy_agent.py)), and Streamlit visualization servers on Ports `8501`/`8502`.
+  * An autonomous agent execution service ([agent_runtime.py](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/multi-agent-control-plane-main/agent_runtime.py)) runs a continuous sense-validate-decide-enforce-act-observe-explain FSM loop.
+* **Repo / Location:** [multi-agent-control-plane-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/multi-agent-control-plane-main)
+* **Execution Status:** Fully operational and testable.
+* **Runtime Status:** Can be run locally via `control_plane.backend.app.main:app` (FastAPI) and `agent_runtime.py` (autonomous cycle). Includes a runnable test harness ([e2e_integration_test.py](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/multi-agent-control-plane-main/e2e_integration_test.py)).
+* **Integration Status:** High. Integrates with the Rayyan Executor service (Port `5003`), logs telemetry status to `/control-plane/runtime-ingest` (FastAPI), and queries an external decision engine (mocked on Port `5000` via [dashboard.py](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/pipeline-integration-py-main/dashboard.py)).
+* **Replay Maturity:** High. Implements cryptographic lineage journals (`trace_log.jsonl`) and exposes endpoints `/api/lineage/{execution_id}` and `/api/lineage/{execution_id}/verify` to replay actions and verify transition integrity.
+* **Observability Maturity:** High. Emits structured state logs, active dashboard payloads `/live-dashboard`, and verifies execution FSM transitions.
+* **Deployment Maturity:** High. Includes local Docker Compose configurations ([docker-compose.yml](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/multi-agent-control-plane-main/docker-compose.yml)) and Render configurations ([render.yaml](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/multi-agent-control-plane-main/render.yaml)).
+* **Known Risks:** The system maintains two separate decision paths:
+  1. API-driven loop: Ingestion -> Local deterministic thresholds -> Executor.
+  2. Autonomous FSM loop: `agent_runtime.py` -> external decision API (Port `5000`) -> cryptographic signatures -> Executor.
+  This duality creates architectural bifurcation and increases configuration drift.
+* **Current Constitutional Positioning:** Central Orchestration Authority.
+* **Duplicate / Overlap Analysis:** Contains a nested duplicate copy of Rayyan's `reliability-controller2-main` directory.
+* **Recommendation:** **KEEP** as the core orchestration plane. Full convergence should proceed by consolidating the duplicate subdirectory, replacing the Port `5000` mock decision endpoint with a real connection to Ritesh's RL Brain, and pruning the legacy Streamlit UIs.
 
 ---
 
-System: Decision Brain / RL Engine (pravah-integration.py-main / decision-brain-cp.py-main)
-- Builder / Owner: Ritesh (contributors listed in README; multiple repos implement brain functionality)
-- Purpose: RL-based decision engine (Q-table, state encoder, reward engine, action guards, autonomy loop) that generates decisions for the control plane.
-- Architecture summary: `rl/` modules (q_table_store, rl_agent, autonomy_loop), `guard/` modules (action_guard, cooldown_manager), FastAPI endpoints for health and q-table.
-- Repo / location: pravah-integration.py-main, decision-brain-cp.py-main (similar decision/rl content across repos)
-- Execution status: README provides run instructions (uvicorn main:app) and integration tests.
-- Runtime status: Background autonomy loop and endpoints available; Q-table persistence described (DEV read/write only).
-- Integration status: Telemetry and orchestrator clients documented; integrates with control-plane telemetry sources.
-- Replay maturity: Q-table persistence exists; no explicit trace replay store documented (medium confidence).
-- Observability maturity: Dashboard artifacts and logs, integration tests, and q-table endpoints present.
-- Deployment maturity: Basic run instructions; no container manifests referenced in README (low/medium confidence).
-- Known risks: Q-table updates only in DEV — risk of different production behavior and drift between DEV/STAGE/PROD.
-- Current constitutional positioning: Decision Brain = Truth Source for decision outputs; Consumer of telemetry and Orchestrator results.
-- Duplicate / overlap analysis: Decision/RL implementations appear in multiple repos — require convergence analysis in Phase 2.
-- Recommendation: Keep Decision Brain as canonical decision generator; consolidate RL logic into a single canonical repo (defer to Phase 2 for merge details).
-
-Evidence:
-- [pravah-integration.py-main/README.md](pravah-integration.py-main/README.md)
-- [decision-brain-cp.py-main/README.md](decision-brain-cp.py-main/README.md)
-- Example modules: `pravah-integration.py-main/rl/q_table_store.py` (README references)
+## 2. Distributed Reliability Controller (V1)
+* **System Name:** Distributed Reliability Controller
+* **Builder / Owner:** Rayyan
+* **Purpose:** Legacy distributed health controller implementing failure classification, cooldown gating, and wait/restart/escalate actions.
+* **Architecture Summary:** Designed as a Python Flask app calling submodules under `controller/` (state, detector, decision, executor, monitor).
+* **Repo / Location:** [reliability-controller-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/reliability-controller-main)
+* **Execution Status:** **BROKEN / INCOMPLETE**. Core logic files are missing: `controller/state.py`, `controller/detector.py`, and `controller/decision.py` are absent, causing runtime crashes on launch.
+* **Runtime Status:** Non-functional.
+* **Integration Status:** None.
+* **Replay Maturity:** None.
+* **Observability Maturity:** Low. Specifies standard Prometheus-style metrics `/metrics` and a mathematical Stability Score: `100 - (failures * 2) + (recoveries * 3)`.
+* **Deployment Maturity:** Medium. Contains a basic `Dockerfile` and Kubernetes configurations under `k8s/` (`deployment.yaml`, `service.yaml`).
+* **Known Risks:** Missing files render this codebase unusable.
+* **Current Constitutional Positioning:** Obsolete prototype.
+* **Duplicate / Overlap Analysis:** Direct precursor to the multi-service system built in `reliability-controller2-main`.
+* **Recommendation:** **DEPRECATE**. Remove to prevent confusing developers.
 
 ---
 
-System: Pipeline Integration & Dashboards
-- Builder / Owner: multiple (pipeline-integration-py-main, UNIFIED-DASHBOARD.PY-main, unified-monitor-dashboard-main)
-- Purpose: Pipeline dashboards and unified infrastructure dashboards for visualization and pipeline monitoring.
-- Architecture summary: Python-based dashboards, simple web UIs, integration tests and dashboard scripts.
-- Repo / location: pipeline-integration-py-main, UNIFIED-DASHBOARD.PY-main, unified-monitor-dashboard-main
-- Execution status: READMEs show local run instructions and features.
-- Runtime status: Web dashboards run as simple Python servers (ports often 5000).
-- Integration status: Query control-plane endpoints for status and metrics.
-- Replay maturity: Dashboards are consumer-only; no replay infrastructure.
-- Observability maturity: Provide visualization and decision history views.
-- Deployment maturity: Local run instructions; no centralized deployment manifests in README.
-- Known risks: Two repositories (`UNIFIED-DASHBOARD.PY-main` and `unified-monitor-dashboard-main`) have near-identical README content and structure (evidence of duplication).
-- Current constitutional positioning: Observer / Consumer (dashboards only observe and display data).
-- Duplicate / overlap analysis: `UNIFIED-DASHBOARD.PY-main` and `unified-monitor-dashboard-main` appear duplicated; recommendation to merge to a single dashboard repo.
-- Recommendation: Merge duplicate dashboards; keep pipeline dashboard as consumer UI.
-
-Evidence:
-- [pipeline-integration-py-main/README.md](pipeline-integration-py-main/README.md)
-- [UNIFIED-DASHBOARD.PY-main/README.md](UNIFIED-DASHBOARD.PY-main/README.md)
-- [unified-monitor-dashboard-main/README.md](unified-monitor-dashboard-main/README.md)
-
----
-
-Evidence Reviewed (initial, Phase 1 pass)
-- Workspace root listing: c:\\Users\\spal4\\OneDrive\\Desktop\\SHIVAM\\BHIV
-- Readme and artifacts inspected (selected):
-  - [multi-agent-control-plane-main/README.md](multi-agent-control-plane-main/README.md)
-  - [multi-agent-control-plane-main/agent_runtime.py](multi-agent-control-plane-main/agent_runtime.py)
-  - [multi-agent-control-plane-main/control_plane/api/agent_api.py](multi-agent-control-plane-main/control_plane/api/agent_api.py)
-  - [multi-agent-control-plane-main/runtime_payload_schema.json](multi-agent-control-plane-main/runtime_payload_schema.json)
-  - [reliability-controller2-main/README.md](reliability-controller2-main/README.md)
-  - [reliability-controller2-main/REVIEW_PACKET.md](reliability-controller2-main/REVIEW_PACKET.md)
-  - [reliability-controller2-main/CONCURRENCY_PROOF.md](reliability-controller2-main/CONCURRENCY_PROOF.md)
-  - [reliability-controller2-main/.github/workflows/deploy.yml](reliability-controller2-main/.github/workflows/deploy.yml)
-  - [SAARTHI-ENFORCEMENT.PY-main/sarathi/app.py](SAARTHI-ENFORCEMENT.PY-main/sarathi/app.py)
-  - [SAARTHI-ENFORCEMENT.PY-main/core/app.py](SAARTHI-ENFORCEMENT.PY-main/core/app.py)
-  - [SAARTHI-ENFORCEMENT.PY-main/executer/app.py](SAARTHI-ENFORCEMENT.PY-main/executer/app.py)
-  - [saartthi-integration.py-main/sarathi/app.py](saartthi-integration.py-main/sarathi/app.py)
-  - [saartthi-integration.py-main/executer/app.py](saartthi-integration.py-main/executer/app.py)
-  - [pravah-integration.py-main/README.md](pravah-integration.py-main/README.md)
-  - [decision-brain-cp.py-main/README.md](decision-brain-cp.py-main/README.md)
-  - [pipeline-integration-py-main/README.md](pipeline-integration-py-main/README.md)
-  - [UNIFIED-DASHBOARD.PY-main/README.md](UNIFIED-DASHBOARD.PY-main/README.md)
-  - [unified-monitor-dashboard-main/README.md](unified-monitor-dashboard-main/README.md)
-
-Claims Made
-- Each system section above restates facts directly supported by the referenced README and source files.
-
-Confidence
-- High: Explicit facts quoted from READMEs and source files (ports, file paths, required headers, trace_id usage).
-- Medium: Deployment and replay maturity when only examples or workflows are present but no full orchestration manifests or durable replay stores.
-- Low: Any statement about "ownership" that is not explicitly declared in a repository file was derived from the initial mapping you provided; these are marked and can be updated if owners differ in repository metadata.
+## 3. Reliability / Live Observability Stream (V2)
+* **System Name:** Reliability Controller v2 (Live Observability Stream)
+* **Builder / Owner:** Rayyan
+* **Purpose:** Multi-service application and execution infrastructure that validates trace-linked event streams, caller headers, and automated Docker/Kubernetes container restarts.
+* **Architecture Summary:** Decoupled system of 4 Flask apps: 
+  * `web1` (Port `5001`) and `web2` (Port `5002`): user-facing web apps.
+  * `monitor` (Port `5004`): Aggregates events, validates schemas, and exposes Server-Sent Events (SSE) `/signals/stream`.
+  * `sarathi` (Port `5005:5001`): policy decision gateway.
+  * `executer` (Port `5003`): signs and executes docker/k8s actions.
+* **Repo / Location:** [reliability-controller2-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/reliability-controller2-main)
+* **Execution Status:** Fully operational. Includes a detailed handoff execution guide ([HANDOVER_EXECUTION_FLOW.md](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/reliability-controller2-main/HANDOVER_EXECUTION_FLOW.md)) and testing script ([handover_demo.sh](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/reliability-controller2-main/handover_demo.sh)).
+* **Runtime Status:** Active and run-ready.
+* **Integration Status:** High. Uses header validations (`X-CALLER: sarathi`) and strict trace-ID propagation (`X-TRACE-ID`) between components.
+* **Replay Maturity:** Low. Traces events through FIFO queues and provides mathematical proof of trace isolation ([CONCURRENCY_PROOF.md](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/reliability-controller2-main/CONCURRENCY_PROOF.md)), but lacks persistent database-backed replay.
+* **Observability Maturity:** High. Emits real-time observability signals via SSE streams.
+* **Deployment Maturity:** High. Includes Kubernetes configurations in `k8s/` (NodePorts, RBAC ClusterRole bindings) and a local `docker-compose.yml`.
+* **Known Risks:** Port conflict when running locally without containers: `web1` and `sarathi` both default to Port `5001` in their source codes. Also, header-based auth (`X-CALLER`) is vulnerable to spoofing unless proxied.
+* **Current Constitutional Positioning:** Runtime Target, Metrics Stream, and Action Executor.
+* **Duplicate / Overlap Analysis:** Exists in duplicate: once at the workspace root and once nested under Shivam's control plane.
+* **Recommendation:** **KEEP & CONSOLIDATE**. Merge this codebase as the official execution and monitoring subsystem of the central control plane, resolve the Port `5001` conflict, and enforce the cryptographic signatures built in Shivam's CP instead of the plain header-based `X-CALLER` checks.
 
 ---
 
-# PHASE 1 VERIFICATION REPORT (Rule 2 Compliance)
-
-## Evidence Reviewed
-
-**Repositories Scanned (11 total):**
-- multi-agent-control-plane-main
-- reliability-controller2-main
-- SAARTHI-ENFORCEMENT.PY-main
-- saartthi-integration.py-main
-- decision-brain-cp.py-main
-- pravah-integration.py-main
-- pipeline-integration-py-main
-- UNIFIED-DASHBOARD.PY-main
-- unified-monitor-dashboard-main
-
-**Artifacts Inspected:**
-- 18x README.md files (purpose, architecture, deployment)
-- 6x API entrypoint files (`**/app.py`, `**/main.py`, `**/run.py`)
-- 1x runtime contract schema (`runtime_payload_schema.json`)
-- 3x enforcement POCs (sarathi, core, executer)
-- 2x architecture/review documents (REVIEW_PACKET.md, CONCURRENCY_PROOF.md)
-- 1x CI/CD manifest (.github/workflows/deploy.yml)
-- 1x governance schema (decisioning, action guards)
-
-**Files Located:** 23 direct artifacts; additional module directories (`rl/`, `guard/`, `control_plane/`, etc.) enumerated.
+## 4. Containerized Monitoring Service
+* **System Name:** Containerized Monitoring Service
+* **Builder / Owner:** Rayyan
+* **Purpose:** Simple single-service monitoring prototype that runs a background health-check loop and handles manual failure injections.
+* **Architecture Summary:** A Flask app (Port `5000`) starting an internal daemon thread `monitor_service()` that polls a local boolean `failure_state` and performs self-healing simulation.
+* **Repo / Location:** [monitoring-service-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/monitoring-service-main)
+* **Execution Status:** Operational.
+* **Runtime Status:** Functional on Port `5000`.
+* **Integration Status:** Low (fully self-contained, no external services).
+* **Replay Maturity:** None.
+* **Observability Maturity:** Medium. Basic health/metrics endpoints and stdout JSON logging.
+* **Deployment Maturity:** Medium. Dockerfile and Kubernetes manifests with basic liveness/readiness probes.
+* **Known Risks:** Too primitive; does not check real environment states.
+* **Current Constitutional Positioning:** Standalone prototype.
+* **Duplicate / Overlap Analysis:** Superseded entirely by the distributed controller setup in `reliability-controller2-main`.
+* **Recommendation:** **DEPRECATE**. Keep only as a reference model for simple self-healing patterns.
 
 ---
 
-## Claims Made (5 high-level claims per system)
-
-### Claim 1: Multi-Agent Control Plane (Shivam) operates as the primary orchestration authority
-**Evidence:** README.md documents three-service topology (Flask 7000, FastAPI 8000, Next.js 4500). agent_runtime.py implements sense→validate→decide→enforce→act→observe→explain loop. control_plane/api/agent_api.py exposes /api/runtime endpoint as canonical ingestion point.
-**Confidence:** HIGH
-
-### Claim 2: Sarathi enforcement layer (Ritesh) implements deterministic governance through X-CALLER header enforcement and trace_id propagation
-**Evidence:** sarathi/app.py enforces trace_id via Pydantic schema; core/app.py hardcodes call to Sarathi before forwarding to executer; executer/app.py returns 403 if X-CALLER != "sarathi"; test scripts validate this flow.
-**Confidence:** HIGH
-
-### Claim 3: Reliability-Controller2 (Rayyan) provides real-time observability stream via SSE with per-trace isolation and FIFO queue semantics
-**Evidence:** README.md documents "Real-time streaming (SSE)" and "Trace-linked observability"; CONCURRENCY_PROOF.md provides mathematical proof of trace isolation, deduplication via last_sent{}, and per-trace signal filtering using strict `trace_id == trace_id` equality.
-**Confidence:** HIGH
-
-### Claim 4: Decision Brain / RL implementations exist in multiple repos (pravah-integration.py-main, decision-brain-cp.py-main) with Q-table persistence (DEV only) and environment-aware action guards
-**Evidence:** Both READMEs document rl/ modules, state_encoder, reward_engine, action_guard, cooldown_manager, autonomy_loop. Environment-aware behavior table shown: DEV (Q-table updates, ε=0.1), STAGE/PROD (no updates, ε=0.0).
-**Confidence:** HIGH
-
-### Claim 5: Dashboard implementations are duplicated across UNIFIED-DASHBOARD.PY-main and unified-monitor-dashboard-main (near-identical README structure and component organization)
-**Evidence:** Both READMEs describe identical control-plane + decision-brain + dashboard architecture, identical monitoring apps (web-app-1, api-service, data-processor), identical runtime contract schema, identical port (5000), identical refresh rates (10s).
-**Confidence:** HIGH
+## 5. Sarathi Enforcement PoC
+* **System Name:** Sarathi Enforcement PoC
+* **Builder / Owner:** Ritesh
+* **Purpose:** Deterministic policy gatekeeper prototype showing that executors must reject requests that bypass the Sarathi policy engine.
+* **Architecture Summary:** Three Flask/FastAPI services: `sarathi` (Port `8000` / `/decision`), `core` (Port `8002` / `/invoke`), and `executer` (Port `8001` / `/execute`).
+* **Repo / Location:** [SAARTHI-ENFORCEMENT.PY-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/SAARTHI-ENFORCEMENT.PY-main)
+* **Execution Status:** Operational via manual test scripts.
+* **Runtime Status:** Functional.
+* **Integration Status:** Medium. Validates requests via Pydantic schemas and enforces headers.
+* **Replay Maturity:** None.
+* **Observability Maturity:** Low. Basic logs and stdout prints.
+* **Deployment Maturity:** Low (no Docker files).
+* **Known Risks:** Relies on plain headers (`X-CALLER: sarathi`) for trust.
+* **Current Constitutional Positioning:** Policy enforcement prototype.
+* **Duplicate / Overlap Analysis:** Completely duplicated by `saartthi-integration.py-main`.
+* **Recommendation:** **DEPRECATE** this folder in favor of `saartthi-integration.py-main`.
 
 ---
 
-## Evidence Supporting Each Claim
-
-### Claim 1 Support
-- **Port topology:** [README.md](multi-agent-control-plane-main/README.md) lines 24–44 (Flask 7000, FastAPI 8000, Next.js 4500)
-- **Loop semantics:** [agent_runtime.py](multi-agent-control-plane-main/agent_runtime.py) lines 1–10 (docstring: sense→validate→decide→enforce→act→observe→explain)
-- **Ingestion endpoint:** [control_plane/api/agent_api.py](multi-agent-control-plane-main/control_plane/api/agent_api.py) (reference: README.md lists /api/runtime endpoint)
-- **Version/Status:** [README.md](multi-agent-control-plane-main/README.md) line 8 (Version: 1.0.0)
-
-### Claim 2 Support
-- **Trace ID schema enforcement:** [sarathi/app.py](SAARTHI-ENFORCEMENT.PY-main/sarathi/app.py) line 10 (DecisionRequest.trace_id: str = Field(..., min_length=1))
-- **Core→Sarathi routing:** [core/app.py](SAARTHI-ENFORCEMENT.PY-main/core/app.py) line 21 (sarathi_resp = await client.post(SARATHI_URL, json=req.dict()))
-- **X-CALLER enforcement:** [executer/app.py](SAARTHI-ENFORCEMENT.PY-main/executer/app.py) line 18 (if x_caller != "sarathi": raise HTTPException(status_code=403))
-- **Test validation:** [saartthi-integration.py-main/test_scripts/test_enforcement.sh](saartthi-integration.py-main/test_scripts/test_enforcement.sh) (curl examples showing enforcement bypass rejection)
-
-### Claim 3 Support
-- **SSE streaming:** [reliability-controller2-main/README.md](reliability-controller2-main/README.md) line 20 (Real-time streaming (SSE))
-- **Per-trace isolation proof:** [CONCURRENCY_PROOF.md](reliability-controller2-main/CONCURRENCY_PROOF.md) lines 102–137 (dedup logic, strict equality, FIFO queue, threading.Lock())
-- **No trace mixing evidence:** [CONCURRENCY_PROOF.md](reliability-controller2-main/CONCURRENCY_PROOF.md) line 137 (Traces never mix. Each trace_id produces only its own signals and events.)
-- **CI/CD deployment:** [.github/workflows/deploy.yml](reliability-controller2-main/.github/workflows/deploy.yml) references k8s manifests and Docker builds
-
-### Claim 4 Support
-- **RL modules present:** [pravah-integration.py-main/README.md](pravah-integration.py-main/README.md) lines 9–56 (Q-Table, State Encoder, Reward Engine, Action Guard, Cooldown Manager, RL Agent, Execution Verifier, Autonomy Loop)
-- **Environment behavior table:** [pravah-integration.py-main/README.md](pravah-integration.py-main/README.md) lines 57–64 (Feature table: Q-table updates ✓ DEV, ✗ STAGE/PROD; Epsilon 0.1 DEV, 0.0 STAGE/PROD)
-- **Autonomy loop cycle:** [pravah-integration.py-main/README.md](pravah-integration.py-main/README.md) lines 47–55 (30-second cycle: telemetry → encode → RL decision → guard → execution → verification → reward → Q-table update)
-
-### Claim 5 Support
-- **UNIFIED-DASHBOARD.PY-main structure:** [README.md](UNIFIED-DASHBOARD.PY-main/README.md) lines 29–56 (control_plane/, decision_brain/, dashboard_ui.py, integration_test.py)
-- **unified-monitor-dashboard-main structure:** [README.md](unified-monitor-dashboard-main/README.md) lines 29–56 (identical structure, identical component layout)
-- **Identical runtime contract:** Both READMEs (lines ~80–100) show identical JSON schema with app_id, environment, timestamp, signals, alerts, metadata
-- **Identical apps monitored:** Both list web-app-1 (3 replicas), api-service (2 replicas), data-processor (1 replica)
+## 6. Sarathi Enforcement Integration
+* **System Name:** Sarathi Enforcement Integration
+* **Builder / Owner:** Ritesh
+* **Purpose:** An integration-ready expansion of the Sarathi Enforcement PoC incorporating workspace integration notes.
+* **Architecture Summary:** Identical tri-service architecture as `SAARTHI-ENFORCEMENT.PY-main`.
+* **Repo / Location:** [saartthi-integration.py-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/saartthi-integration.py-main)
+* **Execution Status:** Operational.
+* **Runtime Status:** Functional.
+* **Integration Status:** Medium. Contains specific integration folders (`artifacts/shivam/` and `artifacts/rayyan/`).
+* **Replay Maturity:** None.
+* **Observability Maturity:** Medium. Contains basic dashboard, curl scripts, and verification procedures.
+* **Deployment Maturity:** Low.
+* **Known Risks:** Shares identical code and port configs with the other PoC, causing port conflicts.
+* **Current Constitutional Positioning:** Governance integration sandbox.
+* **Duplicate / Overlap Analysis:** Direct duplicate of the code inside `SAARTHI-ENFORCEMENT.PY-main`.
+* **Recommendation:** **MERGE** the integration artifacts into the primary control plane repository, then delete this directory.
 
 ---
 
-## Confidence Assessment by Component
-
-| Component | Claim Type | Confidence | Rationale |
-|-----------|-----------|------------|-----------|
-| Control Plane (Shivam) | Authority / Orchestrator | HIGH | Port topology, entrypoints, loop semantics all explicit in README and code |
-| Sarathi Enforcement (Ritesh) | Enforcer / Gatekeeper | HIGH | Enforcement headers, trace_id schemas, test scripts all demonstrate actual HTTP enforcement logic |
-| Observability Stream (Rayyan) | Observer / Publisher | HIGH | SSE proofs, concurrency analysis, mathematical isolation guarantees provided in CONCURRENCY_PROOF.md |
-| Decision Brain (Ritesh) | Decision Generator | HIGH | RL modules, Q-table, autonomy loop, environment gates all documented with explicit file paths |
-| Dashboard Duplication (multiple) | Consumer / Visualization | HIGH | Identical README structure and component organization across two separate repos |
-| Replay Maturity | Support Function | MEDIUM | Trace propagation proofs present; durable replay store not documented; future design needed |
-| Deployment Maturity (Control Plane) | Infrastructure | MEDIUM | render.yaml and docker-compose referenced; full orchestration not detailed in README |
-| Deployment Maturity (Decision Brain) | Infrastructure | MEDIUM | Basic `uvicorn` run instructions; no container or orchestration manifests |
-| Ownership (Control Plane / Decision Brain) | Attribution | MEDIUM | Builder mapping provided externally; no explicit owner metadata in repository files |
-
----
-
-## Summary of Findings
-
-**5 Pravah Systems Identified:**
-1. Multi-Agent Control Plane — VERIFIED as primary orchestration authority
-2. Reliability/Observability Stream — VERIFIED as real-time trace-linked system
-3. Sarathi Enforcement — VERIFIED as deterministic governance layer
-4. Decision Brain / RL Engine — VERIFIED across multiple repos; duplication exists
-5. Dashboard / Pipeline Monitoring — VERIFIED; significant duplication detected (UNIFIED-DASHBOARD.PY-main ↔ unified-monitor-dashboard-main)
-
-**Architectural Truth:**
-- Control loop exists and is documented (sense → decide → act → observe)
-- Trace propagation is enforced end-to-end (trace_id from source → Sarathi → Executer → Stream)
-- Enforcement is real (X-CALLER header required; 403 rejection tested)
-- Observability is real-time SSE with per-trace isolation guarantees
-- Duplication exists in decision logic and dashboards — Phase 2 convergence required
-
-**Open for Phase 2 Analysis:**
-- Canonical decision implementation selection (pravah-integration vs decision-brain-cp)
-- Dashboard consolidation (merge UNIFIED-DASHBOARD.PY-main and unified-monitor-dashboard-main)
-- Replay infrastructure (currently trace-linked but no durable store)
-- Schema drift detection (multiple runtime contracts across repos)
+## 7. Decision Brain / RL Engine (In-Memory CP Edition)
+* **System Name:** Decision Brain (In-Memory Edition)
+* **Builder / Owner:** Ritesh
+* **Purpose:** Reinforcement learning decision prototype that processes Shivam's control plane telemetry schema and generates actions.
+* **Architecture Summary:** Implements state mapping, rules-based fallback decisions, in-memory Q-tables, safety guards, and environment rate limits.
+* **Repo / Location:** [decision-brain-cp.py-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/decision-brain-cp.py-main)
+* **Execution Status:** Operational via integration tests.
+* **Runtime Status:** Standalone scripts.
+* **Integration Status:** High. Uses clients ([telemetry.py](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/decision-brain-cp.py-main/decision_brain/telemetry.py), [orchestrator.py](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/decision-brain-cp.py-main/decision_brain/orchestrator.py)) configured to call control plane endpoints.
+* **Replay Maturity:** Medium (tracks decision histories inside `AppStateStore`).
+* **Observability Maturity:** Medium. Includes a static HTML/JS visualization dashboard (`dashboard.html`).
+* **Deployment Maturity:** Low.
+* **Known Risks:** Q-table data resides strictly in RAM and is lost on process restart.
+* **Current Constitutional Positioning:** Decision logic sandbox.
+* **Duplicate / Overlap Analysis:** Overlaps directly with `pravah-integration.py-main`.
+* **Recommendation:** **MERGE** with `pravah-integration.py-main` to consolidate the RL engine logic.
 
 ---
 
-## PHASE 1 DELIVERABLE STATUS
-
-✅ PRAVAH_SYSTEM_DOSSIER.md — COMPLETE
-
-All required fields per Phase 1 specification provided:
-- System Name ✅
-- Builder / Owner ✅
-- Purpose ✅
-- Architecture Summary ✅
-- Repo / Location ✅
-- Execution Status ✅
-- Runtime Status ✅
-- Integration Status ✅
-- Replay Maturity ✅
-- Observability Maturity ✅
-- Deployment Maturity ✅
-- Known Risks ✅
-- Current Constitutional Positioning ✅
-- Duplicate / Overlap Analysis ✅
-- Recommendation ✅
-
-**Evidence-backed:** Every claim traces to repository artifacts.
-
-**Confidence Assessed:** Per Rule 2, HIGH/MEDIUM/LOW assigned to each claim with supporting file references.
+## 8. Pravah Hardened Autonomous DevOps Engine (RL Brain)
+* **System Name:** Pravah Hardened RL Engine
+* **Builder / Owner:** Ritesh
+* **Purpose:** Production-safe, persistent reinforcement learning decision engine that manages multi-application telemetry signals.
+* **Architecture Summary:** FastAPI app exposing `/q-table` and `/deployments`. Runs a background `AutonomyLoop` that encodes metrics, updates a JSON Q-table ([q_table_store.py](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/pravah-integration.py-main/rl/q_table_store.py)), enforces cooldowns, and executes actions.
+* **Repo / Location:** [pravah-integration.py-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/pravah-integration.py-main)
+* **Execution Status:** Operational.
+* **Runtime Status:** Active on FastAPI lifespan (Port `8000`).
+* **Integration Status:** High. Uses HTTP client wrappers to fetch metrics and execute actions.
+* **Replay Maturity:** Medium (persists the Q-table to `data/q_table.json`).
+* **Observability Maturity:** High. Exposes `/q-table` status API and includes an interactive HTML dashboard.
+* **Deployment Maturity:** Low (no Docker files).
+* **Known Risks:** Explorer rate $\epsilon = 0.1$ and Q-table updates are permitted in `DEV` environment only, preventing staging/production drift but limiting production learning capacity.
+* **Current Constitutional Positioning:** Primary Reinforcement Learning Decision Engine.
+* **Duplicate / Overlap Analysis:** Shares core logic with `decision-brain-cp.py-main`.
+* **Recommendation:** **KEEP & MERGE**. This should be designated as the official, canonical "Pravah RL Decision Brain". Merge the mapping schemas from `decision-brain-cp.py-main` into it.
 
 ---
 
-## AWAITING APPROVAL
+## 9. Pipeline Integration & Dashboard
+* **System Name:** Pipeline Integration Server
+* **Builder / Owner:** Ritesh
+* **Purpose:** Serves as the operational bridge for the current integrated demo, providing rule-based decisions, dampening checks, and environment rate limits.
+* **Architecture Summary:** Flask application running on Port `5000`. Exposes `/process-runtime` (which currently serves a mock decision response for `agent_runtime.py`) and `/execute-action`.
+* **Repo / Location:** [pipeline-integration-py-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/pipeline-integration-py-main)
+* **Execution Status:** Operational.
+* **Runtime Status:** Functional (Port `5000`).
+* **Integration Status:** Critical (acts as the current decision mock backend for `agent_runtime.py`).
+* **Replay Maturity:** Low.
+* **Observability Maturity:** High (includes HTML templates for dark-theme pipeline telemetry views).
+* **Deployment Maturity:** Low.
+* **Known Risks:** Contains a hardcoded absolute file path:
+  `LOG_FILE = r"C:\Users\spal4\Desktop\SHIVAM\BHIV\multi-agent-control-plane-main\logs\dev\rl_execution_feedback.jsonl"`
+  This path references a directory on a different user's machine (`spal4`), which causes file system crashes on other deployment environments.
+* **Current Constitutional Positioning:** Mock Decision and Execution Service.
+* **Duplicate / Overlap Analysis:** Overlaps functionally with other Flask dashboards in the workspace.
+* **Recommendation:** **REFACTOR & MERGE**. The hardcoded path must be resolved. The `/process-runtime` endpoint must be updated to call Ritesh's real RL Engine (`pravah-integration.py-main`) instead of returning mock JSON.
 
-**Status:** Phase 1 complete, pending your review and approval.
+---
 
-**To proceed to Phase 2:** Provide approval confirmation, and I will begin cross-repository convergence analysis, schema harmonization, and duplication consolidation planning.
+## 10. Unified Dashboard PoC
+* **System Name:** Unified Dashboard PoC
+* **Builder / Owner:** Ritesh
+* **Purpose:** Basic visualization of system metrics.
+* **Architecture Summary:** Flask server on Port `5000` loading simple templates.
+* **Repo / Location:** [UNIFIED-DASHBOARD.PY-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/UNIFIED-DASHBOARD.PY-main)
+* **Execution Status:** Operational.
+* **Runtime Status:** Functional.
+* **Integration Status:** Low.
+* **Replay Maturity:** None.
+* **Observability Maturity:** Medium.
+* **Deployment Maturity:** Low.
+* **Known Risks:** Lacks the advanced telemetry ingestion interfaces present in V2.
+* **Current Constitutional Positioning:** Visualizer sandbox.
+* **Duplicate / Overlap Analysis:** Direct duplicate of the files inside `unified-monitor-dashboard-main`.
+* **Recommendation:** **DEPRECATE** in favor of `unified-monitor-dashboard-main`.
 
-**Your Decision Required:**
-- ✅ Approve Phase 1 and advance to Phase 2?
-- 🔄 Request revisions to Phase 1?
-- ❌ Halt and pivot to alternative analysis?
+---
 
-Please confirm to proceed.
+## 11. Unified Infrastructure Monitoring Dashboard (V2)
+* **System Name:** Unified Infrastructure Monitoring Dashboard
+* **Builder / Owner:** Ritesh
+* **Purpose:** Unified visualization panel aggregating telemetry, decision logs, and execution states from the control plane and decision engines.
+* **Architecture Summary:** Flask dashboard (Port `5000`) that wraps a thread-safe `UnifiedInfrastructureSystem` collector and exposes API endpoints `/api/status`, `/api/telemetry/ingest`, and `/api/apps/register`.
+* **Repo / Location:** [unified-monitor-dashboard-main](file:///c:/Users/black/OneDrive/Desktop/Pravah/BHIV/unified-monitor-dashboard-main)
+* **Execution Status:** Operational.
+* **Runtime Status:** Functional.
+* **Integration Status:** High (designed to receive telemetry from external monitors).
+* **Replay Maturity:** Medium (maintains in-memory lists of recent decision outcomes).
+* **Observability Maturity:** High (includes custom CSS dark-mode dashboard showing health states, CPU/Memory progress bars, and execution timelines).
+* **Deployment Maturity:** Low.
+* **Known Risks:** Binds to Port `5000`, causing conflicts with other dashboards in the workspace.
+* **Current Constitutional Positioning:** Primary Monitoring UI.
+* **Duplicate / Overlap Analysis:** Conceptual duplicate of `UNIFIED-DASHBOARD.PY-main`.
+* **Recommendation:** **KEEP & MERGE**. Replace the legacy Streamlit pages in Shivam's control plane with this custom, light-weight HTML dashboard. Bind it to Port `8050` to avoid conflicts.
+
+---
+
+## Duplication & Overlap Matrix
+
+| Repo/System Folder | Overlaps With | Core Reason for Overlap | Convergence Recommendation |
+| :--- | :--- | :--- | :--- |
+| **reliability-controller-main** | `reliability-controller2-main` | Older, broken version of the reliability app. | **Deprecate** |
+| **SAARTHI-ENFORCEMENT.PY-main** | `saartthi-integration.py-main` | Identical codebase without integration notes. | **Deprecate** |
+| **UNIFIED-DASHBOARD.PY-main** | `unified-monitor-dashboard-main` | Identical dashboard templates with fewer features. | **Deprecate** |
+| **decision-brain-cp.py-main** | `pravah-integration.py-main` | Both represent RL decision sandboxes. | **Merge** into `pravah-integration.py-main` |
+| **pipeline-integration-py-main** | `unified-monitor-dashboard-main` | Both run dashboards on Port 5000 with mock engines. | **Refactor** path errors and **merge** |
+
+---
+
+## Step-by-Step Convergence Plan
+
+```mermaid
+graph TD
+    A[multi-agent-control-plane-main] -->|Prune Subdirectories| A1[Clean Control Plane]
+    B[reliability-controller2-main] -->|Upgrade headers to HMAC signatures| A1
+    C[pravah-integration.py-main] -->|Merge state maps from decision-brain-cp| C1[Canonical RL Brain]
+    D[unified-monitor-dashboard-main] -->|Prune UNIFIED-DASHBOARD & pipeline-integration| D1[Canonical Dashboard]
+    
+    C1 -->|Wire Port 5000 API calls| A1
+    D1 -->|Expose on Port 8050| A1
+```
+
+1. **Pruning Legacy Sandboxes:** Delete the broken `reliability-controller-main`, duplicate `SAARTHI-ENFORCEMENT.PY-main`, and basic `UNIFIED-DASHBOARD.PY-main`.
+2. **Consolidate the RL Engine:** Merge the state schemas and configurations of `decision-brain-cp.py-main` into `pravah-integration.py-main` (the persistent JSON Q-table engine).
+3. **Resolve Path Errors in Dashboard:** Fix the hardcoded username path `C:\Users\spal4\Desktop\...` in `pipeline-integration-py-main/dashboard.py`.
+4. **Wire the Autonomous Loop:** Update the mock decision endpoint on Port `5000` to query the real `pravah-integration.py-main` FastAPI engine on Port `8000`.
+5. **Harmonize Dashboard UI:** Integrate `unified-monitor-dashboard-main` as the official visual frontend of the Control Plane, running it on Port `8050` instead of Port `5000` to prevent localhost conflicts.
