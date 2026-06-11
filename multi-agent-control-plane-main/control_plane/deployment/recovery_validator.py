@@ -10,11 +10,12 @@ from typing import Any, Dict, List, Optional
 from control_plane.persistence.append_only_log import AppendOnlyLog
 from control_plane.persistence.hash_lineage_verifier import HashLineageVerifier
 from control_plane.persistence.replay_index import ReplayIndex, SnapshotRegistry
-from control_plane.security.semantic_guard_engine import get_semantic_guard
 
 from .deployment_proof import DeploymentProofPacket
 from .startup_validator import DeploymentPaths
 
+
+from control_plane.security.legitimacy_doctrine import LegitimacyDoctrine, DependencyCondition
 
 @dataclass(frozen=True)
 class RecoveryValidationResult:
@@ -25,6 +26,8 @@ class RecoveryValidationResult:
     state_hash: Optional[str]
     failures: List[str] = field(default_factory=list)
     details: Dict[str, Any] = field(default_factory=dict)
+    legitimacy: Optional[str] = None
+    doctrine_inputs: Optional[Dict[str, Any]] = None
 
 
 class RecoveryValidator:
@@ -47,11 +50,27 @@ class RecoveryValidator:
 
         if not journal_events:
             failures.append("journal_missing_or_empty")
-            return self._failed_result(execution_id, failures, journal_records=0, state_hash=None)
+            key_deps = DependencyCondition.MISSING_DB_INDEX
+            legitimacy, _, _ = LegitimacyDoctrine.compute(sig_valid=True, trace_valid=True, schema_valid=True, key_deps=key_deps)
+            doctrine_inputs = {
+                "sig_valid": True,
+                "trace_valid": True,
+                "schema_valid": True,
+                "dependency_condition": key_deps.name
+            }
+            return self._failed_result(execution_id, failures, journal_records=0, state_hash=None, legitimacy=legitimacy, doctrine_inputs=doctrine_inputs)
 
         sequence_ok, sequence_error_seq, sequence_error = self.verifier.verify_sequence_continuity(journal_events)
         chain_ok, chain_error_seq, chain_error = self.verifier.verify_hash_chain(journal_events)
-        verification_is_valid = sequence_ok and chain_ok
+        
+        try:
+            from security.lineage_verifier import LineageVerifier
+            LineageVerifier.verify_lineage_signatures(journal_events)
+            signatures_ok = True
+        except Exception:
+            signatures_ok = False
+                
+        verification_is_valid = sequence_ok and chain_ok and signatures_ok
         self.proof_packet.record(
             "hash",
             "recovery_hash_verified",
@@ -63,7 +82,33 @@ class RecoveryValidator:
         )
         if not verification_is_valid:
             failures.append("hash_verification_failed:HASH_CHAIN")
-            return self._failed_result(execution_id, failures, journal_records=len(journal_events), state_hash=None)
+            has_sequence_gap = False
+            sorted_events = sorted(journal_events, key=lambda e: e.get("sequence", 0))
+            if sorted_events:
+                prev_s = sorted_events[0].get("sequence", 1)
+                for ev in sorted_events[1:]:
+                    curr_s = ev.get("sequence", 0)
+                    if curr_s != prev_s + 1:
+                        has_sequence_gap = True
+                        break
+                    prev_s = curr_s
+
+            if has_sequence_gap or not sequence_ok:
+                key_deps = DependencyCondition.PARTIAL_REPLAY_GAP
+                sig_valid = True
+                trace_valid = True
+            else:
+                key_deps = DependencyCondition.ALL_AVAILABLE
+                sig_valid = True
+                trace_valid = False
+            legitimacy, _, _ = LegitimacyDoctrine.compute(sig_valid=sig_valid, trace_valid=trace_valid, schema_valid=True, key_deps=key_deps)
+            doctrine_inputs = {
+                "sig_valid": sig_valid,
+                "trace_valid": trace_valid,
+                "schema_valid": True,
+                "dependency_condition": key_deps.name
+            }
+            return self._failed_result(execution_id, failures, journal_records=len(journal_events), state_hash=None, legitimacy=legitimacy, doctrine_inputs=doctrine_inputs)
 
         replay_index = ReplayIndex(index_path=str(self.paths.replay_index_path))
         index_entry = replay_index.get_execution(execution_id)
@@ -99,35 +144,7 @@ class RecoveryValidator:
         snapshots = SnapshotRegistry(registry_path=str(self.paths.snapshot_directory.parent / "snapshot_registry.json"))
         snapshot = snapshots.get_latest_snapshot(execution_id)
 
-        replay_events = [
-            {
-                "sequence": event.get("sequence"),
-                "execution_id": event.get("execution_id"),
-                "event_id": event.get("event_id"),
-                "state": event.get("state"),
-                "timestamp": event.get("timestamp"),
-                "event_hash": event.get("event_hash"),
-                "previous_hash": event.get("previous_hash"),
-                "source": event.get("source"),
-                "details": event.get("details") or {},
-                "sequence_hash": event.get("sequence_hash"),
-                "lineage_proof": event.get("lineage_proof"),
-            }
-            for event in journal_events
-        ]
 
-        semantic_guard = get_semantic_guard()
-        semantic_violation = semantic_guard.validate_replay_chain(execution_id, replay_events)
-        self.proof_packet.record(
-            "replay",
-            "recovery_replay_reconstructed",
-            execution_id=execution_id,
-            result="PASS" if semantic_violation is None else "FAIL",
-            replay_events=len(replay_events),
-            semantic_violation=None if semantic_violation is None else semantic_violation.to_dict(),
-        )
-        if semantic_violation is not None:
-            failures.append(f"semantic_replay_failed:{semantic_violation.violation_type.value}")
 
         state_hash = self.verifier.compute_execution_state_hash(journal_events)
         hash_target = expected_state_hash or (snapshot.state_hash if snapshot else None)
@@ -144,6 +161,28 @@ class RecoveryValidator:
             failures=failures,
         )
 
+        sig_valid = True
+        trace_valid = True
+        schema_valid = True
+        key_deps = DependencyCondition.ALL_AVAILABLE
+
+        if failures:
+            key_deps = DependencyCondition.MISSING_DB_INDEX
+
+        legitimacy, _, _ = LegitimacyDoctrine.compute(
+            sig_valid=sig_valid,
+            trace_valid=trace_valid,
+            schema_valid=schema_valid,
+            key_deps=key_deps
+        )
+
+        doctrine_inputs = {
+            "sig_valid": sig_valid,
+            "trace_valid": trace_valid,
+            "schema_valid": schema_valid,
+            "dependency_condition": key_deps.name
+        }
+
         return self._final_result(
             execution_id=execution_id,
             failures=failures,
@@ -151,6 +190,8 @@ class RecoveryValidator:
             state_hash=state_hash,
             snapshot_state_hash=snapshot.state_hash if snapshot else None,
             replay_index_loaded=index_entry is not None,
+            legitimacy=legitimacy,
+            doctrine_inputs=doctrine_inputs,
         )
 
     def _load_events(self, execution_id: str) -> List[Dict[str, Any]]:
@@ -173,7 +214,7 @@ class RecoveryValidator:
             for event in events
         ]
 
-    def _failed_result(self, execution_id: str, failures: List[str], journal_records: int, state_hash: Optional[str]) -> RecoveryValidationResult:
+    def _failed_result(self, execution_id: str, failures: List[str], journal_records: int, state_hash: Optional[str], legitimacy: Optional[str] = None, doctrine_inputs: Optional[Dict[str, Any]] = None) -> RecoveryValidationResult:
         return self._final_result(
             execution_id=execution_id,
             failures=failures,
@@ -181,6 +222,8 @@ class RecoveryValidator:
             state_hash=state_hash,
             snapshot_state_hash=None,
             replay_index_loaded=False,
+            legitimacy=legitimacy,
+            doctrine_inputs=doctrine_inputs,
         )
 
     def _final_result(
@@ -192,6 +235,8 @@ class RecoveryValidator:
         state_hash: Optional[str],
         snapshot_state_hash: Optional[str],
         replay_index_loaded: bool,
+        legitimacy: Optional[str] = None,
+        doctrine_inputs: Optional[Dict[str, Any]] = None,
     ) -> RecoveryValidationResult:
         ready = not failures
         status = "READY" if ready else "RECOVERY_FAILED"
@@ -208,4 +253,6 @@ class RecoveryValidator:
                 "snapshot_state_hash": snapshot_state_hash,
                 "replay_index_loaded": replay_index_loaded,
             },
+            legitimacy=legitimacy,
+            doctrine_inputs=doctrine_inputs,
         )

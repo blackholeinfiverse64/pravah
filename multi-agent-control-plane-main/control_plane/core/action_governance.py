@@ -58,6 +58,7 @@ class GovernanceDecision:
     policy_hash: Optional[str] = None
     admission_state: Optional[str] = None
     rejection_code: Optional[str] = None
+    legitimacy: Optional[str] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -68,6 +69,7 @@ class GovernanceDecision:
             'governance_details': self.details,
             'admission_state': self.admission_state,
             'rejection_code': self.rejection_code,
+            'legitimacy': self.legitimacy,
             'policy_snapshot': {
                 'policy_id': self.policy_id,
                 'policy_version': self.policy_version,
@@ -273,6 +275,7 @@ class ActionGovernance:
                 policy_version=self.POLICY_VERSION,
                 policy_hash=policy_hash,
                 admission_state=decision.state.value,
+                legitimacy=decision.legitimacy,
             )
 
         return GovernanceDecision(
@@ -284,6 +287,7 @@ class ActionGovernance:
             policy_hash=policy_hash,
             admission_state=decision.state.value,
             rejection_code=decision.rejection_code.value if decision.rejection_code else None,
+            legitimacy=decision.legitimacy,
         )
 
     def evaluate_contract(
@@ -300,16 +304,19 @@ class ActionGovernance:
         # 1. Eligibility Check
         eligibility_check = self._check_eligibility(decision.action, context)
         if eligibility_check.should_block:
+            eligibility_check.legitimacy = "LEGITIMATE_VALID"
             return eligibility_check
 
         # 2. Cooldown Check
         cooldown_check = self._check_cooldown(decision.action, current_time)
         if cooldown_check.should_block:
+            cooldown_check.legitimacy = "LEGITIMATE_VALID"
             return cooldown_check
 
         # 3. Repetition Suppression Check
         repetition_check = self._check_repetition(decision.action, current_time)
         if repetition_check.should_block:
+            repetition_check.legitimacy = "LEGITIMATE_VALID"
             return repetition_check
 
         policy_hash = compute_policy_hash(self.get_config())
@@ -341,6 +348,7 @@ class ActionGovernance:
                 policy_version=self.POLICY_VERSION,
                 policy_hash=policy_hash,
                 admission_state=admission.state.value,
+                legitimacy=admission.legitimacy,
             )
 
         return GovernanceDecision(
@@ -352,6 +360,7 @@ class ActionGovernance:
             policy_hash=policy_hash,
             admission_state=admission.state.value,
             rejection_code=admission.rejection_code.value if admission.rejection_code else None,
+            legitimacy=admission.legitimacy,
         )
 
     def build_governance_contract(

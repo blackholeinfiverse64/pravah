@@ -52,6 +52,7 @@ def _validate_terminal_state_lock(contract: ExecutionContract, new_state: Execut
 def _normalize_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     normalized = dict(payload)
     normalized.pop("execution_contract", None)
+    normalized.pop("verified_service_id", None)
     return normalized
 
 

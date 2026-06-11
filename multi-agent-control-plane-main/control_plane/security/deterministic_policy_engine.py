@@ -59,6 +59,8 @@ class GovernanceContract:
     immutable: bool = True
 
 
+from control_plane.security.legitimacy_doctrine import LegitimacyDoctrine, LegitimacyStatus, DependencyCondition
+
 @dataclass(frozen=True)
 class PolicyAdmissionRequest:
     action: str
@@ -69,7 +71,10 @@ class PolicyAdmissionRequest:
     decision_contract: DecisionContract | Dict[str, Any] | None = None
     execution_contract: ExecutionContract | Dict[str, Any] | None = None
     policy_id: Optional[str] = None
-
+    sig_valid: bool = True
+    trace_valid: bool = True
+    schema_valid: bool = True
+    nonce_valid: bool = True
 
 @dataclass(frozen=True)
 class PolicyAdmissionDecision:
@@ -81,6 +86,8 @@ class PolicyAdmissionDecision:
     policy_snapshot: Dict[str, Any]
     governance_contract: Optional[Dict[str, Any]] = None
     execution_contract: Optional[Dict[str, Any]] = None
+    legitimacy: Optional[str] = None
+    doctrine_inputs: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -92,6 +99,8 @@ class PolicyAdmissionDecision:
             "policy_snapshot": self.policy_snapshot,
             "governance_contract": self.governance_contract,
             "execution_contract": self.execution_contract,
+            "legitimacy": self.legitimacy,
+            "doctrine_inputs": self.doctrine_inputs,
         }
 
 
@@ -215,6 +224,10 @@ class DeterministicPolicyEngine:
             decision_contract=decision_contract,
             execution_contract=execution_contract,
             policy_id=payload.get("policy_id", self.policy_id),
+            sig_valid=payload.get("sig_valid", True),
+            trace_valid=payload.get("trace_valid", True),
+            schema_valid=payload.get("schema_valid", True),
+            nonce_valid=payload.get("nonce_valid", True),
         )
 
     def _coerce_governance_contract(self, contract: GovernanceContract | Dict[str, Any] | None) -> GovernanceContract | None:
@@ -428,9 +441,65 @@ class DeterministicPolicyEngine:
     def admit(self, request: PolicyAdmissionRequest | Dict[str, Any]) -> PolicyAdmissionDecision:
         coerced_request = self._coerce_request(request)
 
+        # Resolve overrides
+        sig_valid = coerced_request.sig_valid and coerced_request.nonce_valid
+        trace_valid = coerced_request.trace_valid
+        schema_valid = coerced_request.schema_valid
+        
+        # Resolve key dependencies from context using DependencyCondition enum
+        key_deps_str = coerced_request.context.get("dependency_status", "ALL_AVAILABLE")
+        if isinstance(key_deps_str, DependencyCondition):
+            key_deps = key_deps_str
+        else:
+            try:
+                key_deps = DependencyCondition[key_deps_str]
+            except KeyError:
+                key_deps = DependencyCondition.ALL_AVAILABLE
+
+        # Handle early overrides failure
+        if not sig_valid or not trace_valid or not schema_valid:
+            legitimacy, state_val, action_val = LegitimacyDoctrine.compute(
+                sig_valid=sig_valid,
+                trace_valid=trace_valid,
+                schema_valid=schema_valid,
+                key_deps=key_deps
+            )
+            doctrine_inputs = {
+                "sig_valid": sig_valid,
+                "trace_valid": trace_valid,
+                "schema_valid": schema_valid,
+                "dependency_condition": key_deps.name
+            }
+            decision = PolicyAdmissionDecision(
+                allowed=False,
+                state=AdmissionState.POLICY_SIGNATURE_INVALID if not sig_valid else (AdmissionState.POLICY_REJECTED if not trace_valid else AdmissionState.POLICY_VERSION_MISMATCH),
+                rejection_code=RejectionCode.INVALID_SIGNATURE if not sig_valid else (RejectionCode.CONTRACT_VIOLATION if not trace_valid else RejectionCode.POLICY_VERSION_MISMATCH),
+                reason="Request validation override failed",
+                details={
+                    "sig_valid": coerced_request.sig_valid,
+                    "nonce_valid": coerced_request.nonce_valid,
+                    "trace_valid": coerced_request.trace_valid,
+                    "schema_valid": coerced_request.schema_valid,
+                },
+                policy_snapshot=self._build_policy_snapshot(),
+                legitimacy=legitimacy,
+                doctrine_inputs=doctrine_inputs,
+            )
+            self._log_decision(decision, coerced_request)
+            return decision
+
         try:
             decision_contract = self._coerce_decision_contract(coerced_request)
         except DeterministicExecutionRejection as rejection:
+            sig_valid_local = sig_valid and (rejection.code != RejectionCode.INVALID_SIGNATURE)
+            schema_valid_local = schema_valid and (rejection.state != AdmissionState.POLICY_VERSION_MISMATCH)
+            legitimacy, _, _ = LegitimacyDoctrine.compute(sig_valid=sig_valid_local, trace_valid=trace_valid, schema_valid=schema_valid_local, key_deps=key_deps)
+            doctrine_inputs = {
+                "sig_valid": sig_valid_local,
+                "trace_valid": trace_valid,
+                "schema_valid": schema_valid_local,
+                "dependency_condition": key_deps.name
+            }
             decision = PolicyAdmissionDecision(
                 allowed=False,
                 state=rejection.state,
@@ -438,10 +507,19 @@ class DeterministicPolicyEngine:
                 reason=rejection.reason,
                 details=rejection.details,
                 policy_snapshot=self._build_policy_snapshot(),
+                legitimacy=legitimacy,
+                doctrine_inputs=doctrine_inputs,
             )
             self._log_decision(decision, coerced_request)
             return decision
         except Exception as exc:
+            legitimacy, _, _ = LegitimacyDoctrine.compute(sig_valid=True, trace_valid=True, schema_valid=False, key_deps=key_deps)
+            doctrine_inputs = {
+                "sig_valid": True,
+                "trace_valid": True,
+                "schema_valid": False,
+                "dependency_condition": key_deps.name
+            }
             decision = PolicyAdmissionDecision(
                 allowed=False,
                 state=AdmissionState.POLICY_REJECTED,
@@ -449,12 +527,21 @@ class DeterministicPolicyEngine:
                 reason=str(exc),
                 details={"validation_error": str(exc)},
                 policy_snapshot=self._build_policy_snapshot(),
+                legitimacy=legitimacy,
+                doctrine_inputs=doctrine_inputs,
             )
             self._log_decision(decision, coerced_request)
             return decision
 
         governance_contract = self._coerce_governance_contract(coerced_request.governance_contract)
         if governance_contract is None:
+            legitimacy, _, _ = LegitimacyDoctrine.compute(sig_valid=True, trace_valid=True, schema_valid=False, key_deps=key_deps)
+            doctrine_inputs = {
+                "sig_valid": True,
+                "trace_valid": True,
+                "schema_valid": False,
+                "dependency_condition": key_deps.name
+            }
             decision = PolicyAdmissionDecision(
                 allowed=False,
                 state=AdmissionState.GOVERNANCE_REQUIRED,
@@ -462,11 +549,20 @@ class DeterministicPolicyEngine:
                 reason="Governance contract is required",
                 details={"action": coerced_request.action},
                 policy_snapshot=self._build_policy_snapshot(),
+                legitimacy=legitimacy,
+                doctrine_inputs=doctrine_inputs,
             )
             self._log_decision(decision, coerced_request)
             return decision
 
         if coerced_request.policy_version != coerced_request.runtime_policy_version:
+            legitimacy, _, _ = LegitimacyDoctrine.compute(sig_valid=True, trace_valid=True, schema_valid=False, key_deps=key_deps)
+            doctrine_inputs = {
+                "sig_valid": True,
+                "trace_valid": True,
+                "schema_valid": False,
+                "dependency_condition": key_deps.name
+            }
             decision = PolicyAdmissionDecision(
                 allowed=False,
                 state=AdmissionState.POLICY_VERSION_MISMATCH,
@@ -478,6 +574,8 @@ class DeterministicPolicyEngine:
                 },
                 policy_snapshot=self._build_policy_snapshot(),
                 governance_contract=asdict(governance_contract),
+                legitimacy=legitimacy,
+                doctrine_inputs=doctrine_inputs,
             )
             self._log_decision(decision, coerced_request)
             return decision
@@ -486,6 +584,15 @@ class DeterministicPolicyEngine:
             self._verify_governance_contract(coerced_request, decision_contract, governance_contract)
             execution_contract = self._verify_execution_contract(coerced_request, decision_contract)
         except DeterministicExecutionRejection as rejection:
+            sig_valid_local = sig_valid and (rejection.code != RejectionCode.INVALID_SIGNATURE)
+            schema_valid_local = schema_valid and (rejection.state != AdmissionState.POLICY_VERSION_MISMATCH)
+            legitimacy, _, _ = LegitimacyDoctrine.compute(sig_valid=sig_valid_local, trace_valid=trace_valid, schema_valid=schema_valid_local, key_deps=key_deps)
+            doctrine_inputs = {
+                "sig_valid": sig_valid_local,
+                "trace_valid": trace_valid,
+                "schema_valid": schema_valid_local,
+                "dependency_condition": key_deps.name
+            }
             decision = PolicyAdmissionDecision(
                 allowed=False,
                 state=rejection.state,
@@ -495,10 +602,19 @@ class DeterministicPolicyEngine:
                 policy_snapshot=self._build_policy_snapshot(),
                 governance_contract=asdict(governance_contract),
                 execution_contract=execution_contract if 'execution_contract' in locals() else None,
+                legitimacy=legitimacy,
+                doctrine_inputs=doctrine_inputs,
             )
             self._log_decision(decision, coerced_request)
             return decision
         except Exception as exc:
+            legitimacy, _, _ = LegitimacyDoctrine.compute(sig_valid=True, trace_valid=True, schema_valid=False, key_deps=key_deps)
+            doctrine_inputs = {
+                "sig_valid": True,
+                "trace_valid": True,
+                "schema_valid": False,
+                "dependency_condition": key_deps.name
+            }
             decision = PolicyAdmissionDecision(
                 allowed=False,
                 state=AdmissionState.POLICY_REJECTED,
@@ -507,10 +623,19 @@ class DeterministicPolicyEngine:
                 details={"validation_error": str(exc)},
                 policy_snapshot=self._build_policy_snapshot(),
                 governance_contract=asdict(governance_contract),
+                legitimacy=legitimacy,
+                doctrine_inputs=doctrine_inputs,
             )
             self._log_decision(decision, coerced_request)
             return decision
 
+        legitimacy, _, _ = LegitimacyDoctrine.compute(sig_valid=True, trace_valid=True, schema_valid=True, key_deps=key_deps)
+        doctrine_inputs = {
+            "sig_valid": True,
+            "trace_valid": True,
+            "schema_valid": True,
+            "dependency_condition": key_deps.name
+        }
         decision = PolicyAdmissionDecision(
             allowed=True,
             state=AdmissionState.POLICY_APPROVED,
@@ -524,6 +649,8 @@ class DeterministicPolicyEngine:
             policy_snapshot=self._build_policy_snapshot(),
             governance_contract=asdict(governance_contract),
             execution_contract=execution_contract,
+            legitimacy=legitimacy,
+            doctrine_inputs=doctrine_inputs,
         )
         self._log_decision(decision, coerced_request)
         return decision

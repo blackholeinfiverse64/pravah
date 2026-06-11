@@ -56,6 +56,29 @@ from contracts.decision_contract import validate_decision_contract
 from contracts.execution_contract import build_execution_contract
 
 
+class DecisionProvider:
+    """Base interface class for Runtime Decision Providers."""
+    def decide(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        raise NotImplementedError("decide must be implemented by subclasses")
+
+
+class HTTPDecisionProvider(DecisionProvider):
+    """Production decision provider calling the external HTTP engine."""
+    def __init__(self, endpoint_url: str = "http://localhost:5000/process-runtime", timeout: float = 2.0):
+        self.endpoint_url = endpoint_url
+        self.timeout = timeout
+
+    def decide(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        response = requests.post(
+            self.endpoint_url,
+            json=payload,
+            timeout=self.timeout
+        )
+        if not response.text:
+            raise ValueError("Empty response from external API")
+        return response.json()
+
+
 def call_decision_engine(runtime_payload):
     response = requests.post(
         "http://localhost:5000/process-runtime",
@@ -68,13 +91,14 @@ class AgentRuntime:
     """Autonomous AI Agent Runtime with explicit sense-validate-decide-enforce-act-observe-explain loop."""
 
     
-    def __init__(self, env: str = 'dev', agent_id: Optional[str] = None, loop_interval: float = 5.0):
+    def __init__(self, env: str = 'dev', agent_id: Optional[str] = None, loop_interval: float = 5.0, decision_provider: Optional[DecisionProvider] = None):
         """Initialize agent runtime.
         
         Args:
             env: Environment (dev/stage/prod)
             agent_id: Unique agent identifier (auto-generated if None)
             loop_interval: Loop cycle interval in seconds
+            decision_provider: Decision provider class for deciding actions
         """
         self.execution_mode = "external"   # [RUNTIME] CHANGE THIS
         # Normalize environment aliases for internal consistency
@@ -89,6 +113,7 @@ class AgentRuntime:
         self.agent_id = agent_id or f"agent-{uuid.uuid4().hex[:8]}"
         self.env = env
         self.loop_interval = loop_interval
+        self.decision_provider = decision_provider or HTTPDecisionProvider()
 
         self.governance = ActionGovernance(env=self.env)
         # Agent identity
@@ -153,6 +178,7 @@ class AgentRuntime:
         self._last_decision = None
         self._last_block_reason = None
         self._last_block_type = None
+        self._last_legitimacy = None
         
         # Register signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -384,10 +410,7 @@ class AgentRuntime:
             # ENFORCE FIRST
         print("[DECISION] DECISION REACHED:", decision)
 
-        enforcement_result = {
-            "allowed": True,
-            "safe_action": decision
-        }
+        enforcement_result = self._enforce(decision)
 
 
 
@@ -434,8 +457,6 @@ class AgentRuntime:
             return
         
         # ACT - Call the dedicated _act method which handles sarathi signal flow
-        # Must transition through ENFORCING first (valid FSM flow)
-        self.state_manager.transition_to(AgentState.ENFORCING, "governance_enforcement")
         self.state_manager.transition_to(AgentState.ACTING, "executing_action")
         validated_data = validation_result['validated_data']
         trace_id = validated_data.get("trace_id")
@@ -633,16 +654,7 @@ class AgentRuntime:
 
             print("DEBUG PAYLOAD:", payload)
 
-            response = requests.post(
-                "http://localhost:5000/process-runtime",
-                json=payload,
-                timeout=2
-            )
-
-            if not response.text:
-                raise ValueError("Empty response from external API")
-
-            external_decision = response.json()
+            external_decision = self.decision_provider.decide(payload)
 
             print("DEBUG RESPONSE:", external_decision)
 
@@ -666,6 +678,7 @@ class AgentRuntime:
                 "timestamp": datetime.utcnow().isoformat(),
                 "input_data": validated_data
             }
+            return decision
 
         except Exception as e:
             self.logger.error(f"External decision failed: {e}")
@@ -725,6 +738,7 @@ class AgentRuntime:
                 context=context,
                 source="agent_runtime"
             )
+            self._last_legitimacy = governance_result.legitimacy
 
             if governance_result.should_block:
                 # FIX 3: Transition agent state to BLOCKED

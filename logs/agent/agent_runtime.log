@@ -1,2 +1,4 @@
 2026-06-08 16:37:24,980 - agent.agent-d7c149be.runtime - INFO - Initializing system components | Context: {"timestamp": "2026-06-08T11:07:24.980240", "agent_id": "agent-d7c149be", "agent_state": "idle"}
 2026-06-08 16:38:13,313 - agent.agent-d7c149be.runtime - INFO - Redis event bus initialized | Context: {"timestamp": "2026-06-08T11:08:13.313070", "agent_id": "agent-d7c149be", "agent_state": "idle"}
+2026-06-11 14:13:32,433 - agent.agent-absence-test.runtime - INFO - Initializing system components | Context: {"timestamp": "2026-06-11T08:43:32.433118", "agent_id": "agent-absence-test", "agent_state": "idle"}
+2026-06-11 14:13:32,433 - agent.agent-absence-test.runtime - INFO - Redis event bus initialized | Context: {"timestamp": "2026-06-11T08:43:32.433744", "agent_id": "agent-absence-test", "agent_state": "idle"}

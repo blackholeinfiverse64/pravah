@@ -106,6 +106,25 @@ class LineageVerifier:
         if stored_trace_hash and stored_trace_hash != trace_hash(trace_material):
             raise UnsignedReplayEventError("REPLAY_REJECTED_INVALID_SIGNATURE")
 
+    @classmethod
+    def verify_lineage_signatures(cls, journal_events: List[Dict[str, Any]]) -> bool:
+        """Verify the cryptographic signatures of a sequence of journal events.
+        
+        Raises UnsignedReplayEventError/ReplayIntegrityError if any signature is invalid.
+        """
+        for ev in journal_events:
+            sig_event = {
+                "trace_id": ev.get("event_id"),
+                "execution_id": ev.get("execution_id"),
+                "parent_hash": ev.get("previous_hash"),
+                "payload_hash": ev.get("event_hash"),
+                "timestamp": float(ev.get("timestamp")) if ev.get("timestamp") is not None else None,
+                "signer": ev.get("source"),
+                "signature": ev.get("details", {}).get("signature") if ev.get("details") else None,
+            }
+            cls.verify_event_signature(sig_event)
+        return True
+
     @staticmethod
     def verify_payload_integrity(payload: Dict[str, Any], expected_payload_hash: str):
         actual_hash = compute_payload_hash(payload)
