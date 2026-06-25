@@ -2,3 +2,12 @@
 2026-06-08 16:38:13,313 - agent.agent-d7c149be.runtime - INFO - Redis event bus initialized | Context: {"timestamp": "2026-06-08T11:08:13.313070", "agent_id": "agent-d7c149be", "agent_state": "idle"}
 2026-06-11 14:13:32,433 - agent.agent-absence-test.runtime - INFO - Initializing system components | Context: {"timestamp": "2026-06-11T08:43:32.433118", "agent_id": "agent-absence-test", "agent_state": "idle"}
 2026-06-11 14:13:32,433 - agent.agent-absence-test.runtime - INFO - Redis event bus initialized | Context: {"timestamp": "2026-06-11T08:43:32.433744", "agent_id": "agent-absence-test", "agent_state": "idle"}
+2026-06-22 15:57:12,343 - agent.agent-06364953.runtime - INFO - Initializing system components | Context: {"timestamp": "2026-06-22T10:27:12.343464", "agent_id": "agent-06364953", "agent_state": "idle"}
+2026-06-22 15:58:00,452 - agent.agent-06364953.runtime - INFO - Redis event bus initialized | Context: {"timestamp": "2026-06-22T10:28:00.452065", "agent_id": "agent-06364953", "agent_state": "idle"}
+2026-06-22 15:58:48,193 - agent.agent-06364953.runtime - INFO - Perception adapters initialized: 4 adapters | Context: {"timestamp": "2026-06-22T10:28:48.193793", "agent_id": "agent-06364953", "agent_state": "idle"}
+2026-06-22 15:58:48,194 - agent.agent-06364953.runtime - INFO - All components initialized | Context: {"timestamp": "2026-06-22T10:28:48.194468", "agent_id": "agent-06364953", "agent_state": "idle"}
+2026-06-22 15:58:48,195 - agent.agent-06364953.runtime - INFO - Agent initialized: id=agent-06364953, env=dev, version=1.0.0 | Context: {"timestamp": "2026-06-22T10:28:48.195443", "agent_id": "agent-06364953", "agent_state": "idle"}
+2026-06-22 15:58:48,200 - agent.agent-06364953.runtime - INFO - Autonomous operation: agent_initialization
+2026-06-22 15:58:48,207 - agent.agent-06364953.runtime - INFO - Agent runtime starting continuous operation | Context: {"timestamp": "2026-06-22T10:28:48.207021", "agent_id": "agent-06364953", "agent_state": "idle"}
+2026-06-22 15:58:48,222 - agent.agent-06364953.runtime - INFO - Autonomous operation: continuous_operation_start
+2026-06-22 15:58:48,223 - agent.agent-06364953.runtime - INFO - State transition: idle -> observing (sensing_environment)
